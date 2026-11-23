@@ -10,6 +10,9 @@ import {
 import { openPreviewModal } from './preview-modal.js';
 import { createFillableNdaSample, createConfidentialEditableSample } from './samples.js';
 
+// Field types that get a live HTML control on the page (see renderPageWidgets).
+const OVERLAY_FIELD_TYPES = new Set(['text', 'checkbox', 'dropdown', 'optionlist', 'radio']);
+
 const FONT_LABELS = {
     Helvetica: 'Sans (Helvetica)',
     TimesRoman: 'Serif (Times)',
@@ -143,6 +146,7 @@ export function initEditorWorkspaces({
         state.editingTextId = null;
         renderAllPageOverlays();
         renderOverlaySidebar();
+        renderInspector();
         updateActionButtons();
     }
 
@@ -154,6 +158,7 @@ export function initEditorWorkspaces({
         state.editingTextId = null;
         renderAllPageOverlays();
         renderOverlaySidebar();
+        renderInspector();
         updateActionButtons();
     }
 
@@ -322,9 +327,25 @@ export function initEditorWorkspaces({
 
     // ---------- PDF.js Text Span Extraction & Color/Font Sampling ----------
 
-    function extractPageTextSpans(textContent, baseVp) {
+    // pdf.js only exposes a generic family ("sans-serif", "serif", "monospace") in text styles.
+    // The real font name (e.g. "Helvetica-Bold", "ABCDEF+TimesNewRomanPSMT") lives on the font
+    // object, which is available in page.commonObjs once the page has been rendered.
+    function resolveRealFontName(page, loadedName) {
+        try {
+            if (page && loadedName && page.commonObjs.has(loadedName)) {
+                const font = page.commonObjs.get(loadedName);
+                return String(font?.name || font?.loadedName || '');
+            }
+        } catch {
+            // font not resolved yet
+        }
+        return '';
+    }
+
+    function extractPageTextSpans(textContent, baseVp, page = null) {
         const rawItems = [];
         const styles = textContent.styles || {};
+        const realNames = new Map();
 
         for (const item of textContent.items) {
             if (!item || typeof item.str !== 'string' || item.str.length === 0) continue;
@@ -336,6 +357,9 @@ export function initEditorWorkspaces({
             const height = Math.max(fontSizePt * 1.15, item.height || fontSizePt);
             const width = Math.max(2, item.width || fontSizePt * item.str.length * 0.45);
             const style = styles[item.fontName] || {};
+            if (!realNames.has(item.fontName)) {
+                realNames.set(item.fontName, resolveRealFontName(page, item.fontName));
+            }
 
             rawItems.push({
                 str: item.str,
@@ -347,6 +371,8 @@ export function initEditorWorkspaces({
                 fontSizePt,
                 fontName: item.fontName || '',
                 fontFamilyHint: `${item.fontName || ''} ${style.fontFamily || ''}`,
+                fontRealName: realNames.get(item.fontName) || '',
+                fontGeneric: style.fontFamily || '',
             });
         }
 
@@ -377,6 +403,8 @@ export function initEditorWorkspaces({
                     baselineY: curr.baselineY,
                     fontSizePt: curr.fontSizePt,
                     fontFamilyHint: curr.fontFamilyHint,
+                    fontRealName: curr.fontRealName,
+                    fontGeneric: curr.fontGeneric,
                 });
             }
         }
@@ -390,16 +418,29 @@ export function initEditorWorkspaces({
         }));
     }
 
-    function detectFontStyle(hint) {
-        const h = (hint || '').toLowerCase();
-        let fontFamily = 'Helvetica';
-        if (/courier|mono|consolas|menlo|g_d0_f4/.test(h)) {
-            fontFamily = 'Courier';
-        } else if (/times|serif|georgia|lora|garamond|cambria/.test(h)) {
-            fontFamily = 'TimesRoman';
-        }
-        const bold = /bold|black|heavy|semibold|demi|700|600/.test(h);
-        const italic = /italic|oblique|slant/.test(h);
+    function detectFontStyle(span) {
+        const real = (span?.fontRealName || '').toLowerCase().replace(/^[a-z]{6}\+/, '');
+        const generic = (span?.fontGeneric || '').toLowerCase();
+        const hint = (span?.fontFamilyHint || '').toLowerCase();
+
+        const MONO = /courier|mono|consolas|menlo|inconsolata/;
+        const SERIF = /times|georgia|garamond|cambria|palatino|minion|book\s?antiqua|baskerville|lora|charter|serif/;
+        const SANS = /helvetica|arial|sans|calibri|verdana|tahoma|segoe|roboto|inter|lato|gill|futura|frutiger|myriad|open\s?sans|source\s?sans/;
+
+        const classify = (name) => {
+            if (!name) return null;
+            if (MONO.test(name)) return 'Courier';
+            // Check sans before serif: "sans-serif" and "...Sans Serif" both contain "serif".
+            if (SANS.test(name)) return 'Helvetica';
+            if (SERIF.test(name)) return 'TimesRoman';
+            return null;
+        };
+
+        // Prefer the real embedded font name, then pdf.js' generic family, then default to sans.
+        const fontFamily = classify(real) || classify(generic) || 'Helvetica';
+        const styleSource = `${real} ${hint}`;
+        const bold = /bold|black|heavy|semibold|demi|[-_ ,](700|800|900)\b/.test(styleSource);
+        const italic = /italic|oblique|slant/.test(styleSource);
         return { fontFamily, bold, italic };
     }
 
@@ -471,7 +512,22 @@ export function initEditorWorkspaces({
 
             let textColor = '#1c1a17';
             if (fgR.length > 0) {
-                textColor = rgbToHex(median(fgR), median(fgG), median(fgB));
+                // Anti-aliased glyph edges are blends of ink and background, so a plain median
+                // comes out lighter than the real ink. Use only the strongest-contrast pixels.
+                const cutoff = bestDist * 0.8;
+                const coreR = [];
+                const coreG = [];
+                const coreB = [];
+                for (let k = 0; k < fgR.length; k++) {
+                    if (Math.hypot(fgR[k] - bgR, fgG[k] - bgG, fgB[k] - bgB) >= cutoff) {
+                        coreR.push(fgR[k]);
+                        coreG.push(fgG[k]);
+                        coreB.push(fgB[k]);
+                    }
+                }
+                textColor = coreR.length > 0
+                    ? rgbToHex(median(coreR), median(coreG), median(coreB))
+                    : rgbToHex(median(fgR), median(fgG), median(fgB));
             }
 
             return { maskColor, textColor };
@@ -533,17 +589,33 @@ export function initEditorWorkspaces({
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+            // Capture AcroForm widget rectangles for on-page interaction
+            const annots = await page.getAnnotations();
+
+            // Editable fields are drawn as live HTML inputs on top of the page. If pdf.js also
+            // paints their saved appearance onto the canvas, every value shows up twice (and the
+            // old value stays visible after editing). When every editable widget on this page has
+            // an HTML overlay, render in forms mode so pdf.js leaves those widgets off the canvas.
+            // Push buttons, signature fields and read-only fields are still painted normally.
+            const overlayFieldNames = new Set(
+                state.formFields.filter((f) => OVERLAY_FIELD_TYPES.has(f.type)).map((f) => f.name)
+            );
+            const editableWidgets = annots.filter(
+                (a) => a.subtype === 'Widget' && !a.readOnly && !a.pushButton && a.fieldType !== 'Sig'
+            );
+            const canHideWidgets = editableWidgets.length > 0
+                && editableWidgets.every((a) => a.fieldName && overlayFieldNames.has(a.fieldName));
+
             await page.render({
                 canvasContext: ctx,
                 viewport: cssVp,
                 transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+                annotationMode: canHideWidgets ? pdfjsLib.AnnotationMode.ENABLE_FORMS : pdfjsLib.AnnotationMode.ENABLE,
             }).promise;
 
             const textContent = await page.getTextContent();
-            const textSpans = extractPageTextSpans(textContent, baseVp);
+            const textSpans = extractPageTextSpans(textContent, baseVp, page);
 
-            // Capture AcroForm widget rectangles for on-page interaction
-            const annots = await page.getAnnotations();
             const pageWidgets = [];
             for (const annot of annots) {
                 if (annot.subtype !== 'Widget' || !annot.fieldName || !annot.rect) continue;
@@ -558,6 +630,7 @@ export function initEditorWorkspaces({
                     ny: clamp01(y1 / baseVp.height),
                     nw: clamp01((x2 - x1) / baseVp.width),
                     nh: clamp01((y2 - y1) / baseVp.height),
+                    buttonValue: annot.radioButton ? annot.buttonValue : undefined,
                 });
             }
             state.formWidgetsByPage.set(i, pageWidgets);
@@ -613,6 +686,7 @@ export function initEditorWorkspaces({
                 input.addEventListener('input', (e) => {
                     state.formValues[field.name] = e.target.value;
                     syncFormSidebarField(field.name);
+                    syncPageWidgetsForField(field.name);
                 });
                 box.appendChild(input);
             } else if (field.type === 'checkbox') {
@@ -642,6 +716,28 @@ export function initEditorWorkspaces({
                     syncFormSidebarField(field.name);
                 });
                 box.appendChild(sel);
+            } else if (field.type === 'radio') {
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.className = 'ed-widget-checkbox ed-widget-radio';
+                radio.name = `ed-radio-${meta.pageIndex}-${field.name}`;
+                // pdf.js reports the widget's on-state name; when the field has an /Opt array that
+                // name is often an index ("0", "1") while pdf-lib reports the option labels.
+                let radioValue = w.buttonValue != null ? String(w.buttonValue) : '';
+                const opts = field.options || [];
+                if (!opts.includes(radioValue) && /^\d+$/.test(radioValue) && opts[Number(radioValue)] != null) {
+                    radioValue = String(opts[Number(radioValue)]);
+                }
+                radio.value = radioValue;
+                radio.checked = state.formValues[field.name] === radio.value;
+                radio.dataset.field = field.name;
+                radio.addEventListener('change', (e) => {
+                    if (!e.target.checked) return;
+                    state.formValues[field.name] = e.target.value;
+                    syncFormSidebarField(field.name);
+                    syncPageWidgetsForField(field.name);
+                });
+                box.appendChild(radio);
             }
 
             layer.appendChild(box);
@@ -661,12 +757,15 @@ export function initEditorWorkspaces({
 
     function syncPageWidgetsForField(fieldName) {
         for (const meta of state.pagesMeta) {
-            const el = meta.widgetLayerEl.querySelector(`[data-field="${CSS.escape(fieldName)}"]`);
-            if (!el) continue;
-            if (el.type === 'checkbox') {
-                el.checked = Boolean(state.formValues[fieldName]);
-            } else {
-                el.value = state.formValues[fieldName] ?? '';
+            const els = meta.widgetLayerEl.querySelectorAll(`[data-field="${CSS.escape(fieldName)}"]`);
+            for (const el of els) {
+                if (el.type === 'checkbox') {
+                    el.checked = Boolean(state.formValues[fieldName]);
+                } else if (el.type === 'radio') {
+                    el.checked = state.formValues[fieldName] === el.value;
+                } else if (el !== document.activeElement) {
+                    el.value = state.formValues[fieldName] ?? '';
+                }
             }
         }
         updateFormCountBadge();
@@ -856,7 +955,7 @@ export function initEditorWorkspaces({
         const nw = Math.max(0.06, maxNx - minNx + 0.015);
         const nh = Math.max(0.022, maxNy - minNy + 0.004);
         const { maskColor, textColor } = sampleCanvasRegionColors(meta.canvas, minNx, minNy, maxNx - minNx, maxNy - minNy);
-        const { fontFamily, bold, italic } = detectFontStyle(sorted[0].fontFamilyHint);
+        const { fontFamily, bold, italic } = detectFontStyle(sorted[0]);
         const fontSizePt = Math.max(8, Math.min(64, Math.round(sorted[0].fontSizePt)));
 
         pushUndo();
@@ -881,6 +980,9 @@ export function initEditorWorkspaces({
             color: textColor,
             maskColor,
             hasBg: true,
+            // Distance from the top of the box to the first line's original baseline, so the
+            // exported text lands on the same baseline as the text it replaces.
+            baselineOffsetN: Math.max(0, sorted[0].baselineY / meta.baseVp.height - clamp01(minNy - 0.002)),
         };
 
         state.overlays.push(item);
@@ -1657,6 +1759,7 @@ export function initEditorWorkspaces({
                         bold: item.bold,
                         italic: item.italic,
                         size: item.fontSizePt,
+                        baselineFromTop: item.baselineOffsetN != null ? item.baselineOffsetN * meta.baseVp.height : null,
                         colorHex: item.color || '#1c1a17',
                         rgbFn: rgb,
                         degreesFn: degrees,
@@ -1735,7 +1838,7 @@ export function initEditorWorkspaces({
 
         if (canUseVector) {
             const pdfColor = hexToPdfRgb(opts.colorHex, opts.rgbFn);
-            let cursorY = box.top - opts.size * 0.85;
+            let cursorY = box.top - (opts.baselineFromTop ?? opts.size * 0.85);
             for (const line of lines) {
                 if (line.length > 0) {
                     pdfPage.drawText(line, {

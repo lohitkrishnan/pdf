@@ -26,11 +26,25 @@ async function runQpdf(args, inputBytes = null, readOutputPath = null) {
     const stdout = [];
     const stderr = [];
 
-    const qpdf = await window.Module({
-        wasmBinary: wasmBuf.slice(0),
-        print: (line) => stdout.push(String(line)),
-        printErr: (line) => stderr.push(String(line)),
-    });
+    // This QPDF build ignores Module.print/printErr and binds console.log/console.error
+    // synchronously when the factory runs. Swap the console methods for that synchronous
+    // window only, so this instance writes into our buffers instead of the browser console.
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (...parts) => stdout.push(parts.map(String).join(' '));
+    console.error = (...parts) => stderr.push(parts.map(String).join(' '));
+    let qpdfPromise;
+    try {
+        qpdfPromise = window.Module({
+            wasmBinary: wasmBuf.slice(0),
+            print: (line) => stdout.push(String(line)),
+            printErr: (line) => stderr.push(String(line)),
+        });
+    } finally {
+        console.log = origLog;
+        console.error = origErr;
+    }
+    const qpdf = await qpdfPromise;
 
     if (inputBytes) {
         qpdf.FS.writeFile('/in.pdf', inputBytes instanceof Uint8Array ? inputBytes : new Uint8Array(inputBytes));
@@ -64,6 +78,12 @@ async function runQpdf(args, inputBytes = null, readOutputPath = null) {
         stderr: stderr.join('\n'),
         outputBytes,
     };
+}
+
+function cleanQpdfError(text) {
+    const first = String(text || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+    // QPDF prefixes messages with the program name and the virtual input path.
+    return first.replace(/^(\.\/)?this\.program:\s*/, '').replace(/^\/in\.pdf(\s*\([^)]*\))?:\s*/, '');
 }
 
 function parsePdfHeaderVersion(bytes) {
@@ -159,20 +179,33 @@ export async function inspectPdf(bytes, password = '') {
 /**
  * Unlock / decrypt a PDF and optionally apply Lossless (QPDF L9), Balanced (150 DPI), or Maximum (96 DPI) compression.
  */
-export async function unlockAndCompress(bytes, { password = '', compression = 'off' } = {}) {
+export async function unlockAndCompress(bytes, opts = {}) {
+    return (await unlockAndCompressDetailed(bytes, opts)).bytes;
+}
+
+const LOSSLESS_ARGS = [
+    '--compress-streams=y',
+    '--recompress-flate',
+    '--compression-level=9',
+    '--object-streams=generate',
+    '--optimize-images',
+];
+
+/**
+ * Same as unlockAndCompress, but also returns a short note when the requested mode was
+ * not the one that produced the output (e.g. raster made the file bigger, so the
+ * lossless vector result was kept instead).
+ */
+export async function unlockAndCompressDetailed(bytes, { password = '', compression = 'off' } = {}) {
     const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     const pwArgs = password ? [`--password=${password}`] : [];
+    const isRaster = compression === 'balanced' || compression === 'maximum';
 
-    // Step 1: Decrypt / normalize (and apply lossless QPDF flags if compression === 'lossless')
+    // Step 1: Decrypt / normalize. Lossless flags are applied for 'lossless', and also for the
+    // raster modes so there is a vector baseline to compare the raster result against.
     const qpdfArgs = ['--decrypt', ...pwArgs];
-    if (compression === 'lossless') {
-        qpdfArgs.push(
-            '--compress-streams=y',
-            '--recompress-flate',
-            '--compression-level=9',
-            '--object-streams=generate',
-            '--optimize-images'
-        );
+    if (compression === 'lossless' || isRaster) {
+        qpdfArgs.push(...LOSSLESS_ARGS);
     }
     qpdfArgs.push('/in.pdf', '/out.pdf');
 
@@ -180,42 +213,71 @@ export async function unlockAndCompress(bytes, { password = '', compression = 'o
     if ((res.exitCode !== 0 && res.exitCode !== 3) || !res.outputBytes) {
         const errText = res.stderr || res.stdout || `QPDF exited with code ${res.exitCode}`;
         if (/invalid password/i.test(errText)) {
-            const err = new Error('Invalid password for this PDF.');
+            const err = new Error(
+                password
+                    ? 'Wrong password for this PDF. Check the master password or set a per-file override.'
+                    : 'This PDF needs its open password. Enter it above or as a per-file override.'
+            );
             err.code = 'INVALID_PASSWORD';
             throw err;
         }
-        throw new Error(errText.split('\n')[0] || 'Failed to process PDF with QPDF.');
+        throw new Error(cleanQpdfError(errText) || 'Failed to process PDF with QPDF.');
     }
 
-    let finalBytes = res.outputBytes;
+    if (!isRaster) {
+        return keepOriginalIfSmaller(data, res.outputBytes, compression, '');
+    }
 
-    // Step 2: Raster downsample if Balanced (150 DPI) or Maximum (96 DPI)
-    if (compression === 'balanced' || compression === 'maximum') {
-        const dpi = compression === 'balanced' ? 150 : 96;
-        const quality = compression === 'balanced' ? 0.82 : 0.68;
-        const rasterBytes = await rasterDownsamplePdf(finalBytes, dpi, quality);
+    // Step 2: Raster downsample for Balanced (150 DPI) or Maximum (96 DPI)
+    const vectorBytes = res.outputBytes;
+    const dpi = compression === 'balanced' ? 150 : 96;
+    const quality = compression === 'balanced' ? 0.82 : 0.68;
+    let rasterBytes = await rasterDownsamplePdf(vectorBytes, dpi, quality);
 
-        // Run lossless QPDF object-stream cleanup and keep whichever is smaller
-        const optRes = await runQpdf(
-            [
-                '--compress-streams=y',
-                '--recompress-flate',
-                '--compression-level=9',
-                '--object-streams=generate',
-                '/in.pdf',
-                '/out.pdf',
-            ],
-            rasterBytes,
-            '/out.pdf'
+    // Run lossless QPDF object-stream cleanup on the raster output and keep whichever is smaller
+    const optRes = await runQpdf(
+        [
+            '--compress-streams=y',
+            '--recompress-flate',
+            '--compression-level=9',
+            '--object-streams=generate',
+            '/in.pdf',
+            '/out.pdf',
+        ],
+        rasterBytes,
+        '/out.pdf'
+    );
+    if ((optRes.exitCode === 0 || optRes.exitCode === 3) && optRes.outputBytes && optRes.outputBytes.byteLength < rasterBytes.byteLength) {
+        rasterBytes = optRes.outputBytes;
+    }
+
+    // Rasterizing text/vector PDFs often makes them bigger and loses selectable text.
+    // Only keep the raster version when it actually saves space.
+    if (rasterBytes.byteLength >= vectorBytes.byteLength) {
+        return keepOriginalIfSmaller(
+            data,
+            vectorBytes,
+            compression,
+            `${dpi} DPI raster would have been larger (${Math.round(rasterBytes.byteLength / 1024)} KB), so the lossless vector version was kept.`
         );
-        if ((optRes.exitCode === 0 || optRes.exitCode === 3) && optRes.outputBytes && optRes.outputBytes.byteLength < rasterBytes.byteLength) {
-            finalBytes = optRes.outputBytes;
-        } else {
-            finalBytes = rasterBytes;
-        }
     }
+    return { bytes: rasterBytes, note: '' };
+}
 
-    return finalBytes;
+/**
+ * Compression should never make an already-compact file bigger. If the processed output is
+ * larger than the input and the input was not encrypted (so there is nothing to unlock),
+ * hand back the original bytes unchanged.
+ */
+async function keepOriginalIfSmaller(original, processed, compression, note) {
+    if (compression === 'off' || processed.byteLength < original.byteLength) {
+        return { bytes: processed, note };
+    }
+    const probe = await runQpdf(['--show-encryption', '/in.pdf'], original);
+    if (/File is not encrypted/i.test(probe.stdout)) {
+        return { bytes: original, note: 'Already compact: compressing would not make it smaller, so the original was kept unchanged.' };
+    }
+    return { bytes: processed, note };
 }
 
 /**
@@ -277,7 +339,7 @@ export async function lockPdf(
             err.code = 'INVALID_PASSWORD';
             throw err;
         }
-        throw new Error(errText.split('\n')[0] || 'Failed to encrypt PDF.');
+        throw new Error(cleanQpdfError(errText) || 'Failed to encrypt PDF.');
     }
 
     return res.outputBytes;

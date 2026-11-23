@@ -1,4 +1,4 @@
-import { inspectPdf, unlockAndCompress, lockPdf } from './qpdf-engine.js';
+import { inspectPdf, unlockAndCompressDetailed, lockPdf } from './qpdf-engine.js';
 import {
     formatBytes,
     formatDeltaPct,
@@ -157,6 +157,7 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
                         <span>Output: <strong>${escapeHtml(item.outputName)}</strong> (${formatBytes(item.outputBytes.byteLength)})</span>
                         <span class="delta-pill ${savedClass}">${delta}</span>
                     </div>
+                    ${item.note ? `<div class="queue-status queue-note">${escapeHtml(item.note)}</div>` : ''}
                 `;
             }
 
@@ -239,6 +240,7 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
             try {
                 item.info = await inspectPdf(item.bytes, item.passwordOverride || state.masterPassword);
             } catch (err) {
+                item.note = '';
                 item.status = 'error';
                 item.error = err?.message || 'Could not inspect PDF.';
             }
@@ -256,6 +258,25 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
             files.map(async (f) => ({ name: f.name, bytes: await readFileBytes(f) }))
         );
         await addEntries(entries);
+    }
+
+    // After a successful run the file has proven readable with this password, so update
+    // the badge and fill in the page count if the initial inspection could not read it.
+    async function refreshInfoAfterSuccess(item, password) {
+        const info = item.info;
+        if (!info) return;
+        if (info.encryptionState === 'password_required' && password && !info.unlockedWithPassword) {
+            info.unlockedWithPassword = password;
+            info.details = 'Opened with the provided password';
+        }
+        if (info.pageCount == null) {
+            try {
+                const doc = await window.PDFLib.PDFDocument.load(item.outputBytes, { ignoreEncryption: true });
+                info.pageCount = doc.getPageCount();
+            } catch {
+                // leave unknown
+            }
+        }
     }
 
     async function processAll() {
@@ -283,11 +304,14 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
                 let outBytes;
                 let outPassword = '';
 
+                let note = '';
                 if (state.mode === 'unlock') {
-                    outBytes = await unlockAndCompress(item.bytes, {
+                    const result = await unlockAndCompressDetailed(item.bytes, {
                         password: effectivePw,
                         compression: state.compression,
                     });
+                    outBytes = result.bytes;
+                    note = result.note;
                 } else {
                     outBytes = await lockPdf(item.bytes, {
                         inputPassword: effectivePw,
@@ -305,7 +329,9 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
                 item.outputBytes = outBytes;
                 item.outputName = applySuffix(item.name, state.suffix);
                 item.outputPassword = outPassword;
+                item.note = note;
                 item.status = 'done';
+                await refreshInfoAfterSuccess(item, effectivePw);
                 successCount += 1;
 
                 if (state.autoDownload) {
