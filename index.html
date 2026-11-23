@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Studio — Lohit Krishnan</title>
+    <meta name="description" content="100% client-side browser PDF editor: lock, unlock, compress, merge, split, fill forms, sign, edit PDF text, and burn-in redact locally." />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23faf8f3'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-size='16' font-weight='700' fill='%23e07b00'%3EP%3C/text%3E%3C/svg%3E" />
+    <link rel="preload" href="./fonts/Lora-Variable.woff" as="font" type="font/woff" crossorigin />
+    <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="brand-group">
+                <a class="back-home" href="https://lohitkrishnan.com/">← lohitkrishnan.com</a>
+                <div class="brand-title-row">
+                    <h1 class="brand-title">PDF Studio</h1>
+                    <span class="privacy-pill" title="All PDFs stay in your browser using WebAssembly. Zero files are uploaded.">
+                        <span class="privacy-dot" aria-hidden="true"></span>
+                        100% Local · Zero Upload
+                    </span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button type="button" id="theme-toggle" class="btn btn-ghost btn-sm" aria-pressed="false">☾ Dark</button>
+            </div>
+        </div>
+
+        <nav class="workspace-tabs" role="tablist" aria-label="PDF Studio Workspaces">
+            <button type="button" role="tab" class="ws-tab js-nav-tab is-active" data-tab="security" aria-selected="true">
+                <span class="tab-num">1</span> Lock, Unlock &amp; Compress
+            </button>
+            <button type="button" role="tab" class="ws-tab js-nav-tab" data-tab="organizer" aria-selected="false">
+                <span class="tab-num">2</span> Merge, Split &amp; Pages
+            </button>
+            <button type="button" role="tab" class="ws-tab js-nav-tab" data-tab="fill" aria-selected="false">
+                <span class="tab-num">3</span> Fill Forms &amp; Sign
+            </button>
+            <button type="button" role="tab" class="ws-tab js-nav-tab" data-tab="redact" aria-selected="false">
+                <span class="tab-num">4</span> Edit Text, Overlay &amp; Redact
+            </button>
+        </nav>
+    </header>
+
+    <main class="app-main">
+        <!-- WORKSPACE 1: Lock, Unlock & Compress -->
+        <section id="ws-security" class="workspace-panel" aria-label="Lock, Unlock and Compress PDF">
+            <div class="ws-grid-2col">
+                <div class="ws-main-col">
+                    <div class="panel-card">
+                        <div class="dropzone-header">
+                            <div>
+                                <h2 class="panel-title">PDF Security &amp; Compression Queue</h2>
+                                <p class="panel-sub">Drop single or batch PDFs, pick files, or press <kbd>Ctrl+V</kbd> to paste. Powered by QPDF 12.2 WASM.</p>
+                            </div>
+                            <div class="header-btn-group">
+                                <button type="button" id="sec-sample-btn" class="btn btn-secondary btn-sm">Try Sample Encrypted PDF (secret123)</button>
+                                <button type="button" id="sec-clear-btn" class="btn btn-ghost btn-sm" disabled>Clear</button>
+                            </div>
+                        </div>
+
+                        <div id="sec-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop or select PDF files">
+                            <input type="file" id="sec-file-input" accept=".pdf,application/pdf" multiple hidden />
+                            <div class="dropzone-prompt">
+                                <strong>Drop PDF files here</strong> or click to browse (supports batch processing)
+                            </div>
+                        </div>
+
+                        <div id="sec-empty-state" class="empty-state">
+                            Queue is empty. Add PDFs above or click <strong>Try Sample Encrypted PDF (secret123)</strong>.
+                        </div>
+                        <div id="sec-queue-list" class="queue-list"></div>
+
+                        <div id="sec-summary-bar" class="summary-bar" hidden>
+                            <div id="sec-summary-text" class="summary-text"></div>
+                            <div class="summary-actions">
+                                <button type="button" id="sec-download-all-btn" class="btn btn-primary btn-sm" disabled>Download All Processed</button>
+                                <button type="button" id="sec-send-organizer-btn" class="btn btn-secondary btn-sm" disabled>Send to Merge / Split</button>
+                                <button type="button" id="sec-send-editor-btn" class="btn btn-secondary btn-sm" disabled>Send to Edit / Fill / Sign</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="ws-side-col">
+                    <div class="panel-card sticky-panel">
+                        <div class="segmented-control" role="group" aria-label="Operation mode">
+                            <button type="button" id="sec-mode-unlock" class="seg-btn is-active">Unlock &amp; Compress</button>
+                            <button type="button" id="sec-mode-lock" class="seg-btn">Lock / Encrypt</button>
+                        </div>
+
+                        <div id="sec-unlock-panel" class="form-stack">
+                            <div class="field-group">
+                                <label class="field-label" for="sec-master-pw">Shared Master Password (if encrypted)</label>
+                                <div class="input-with-btn">
+                                    <input type="password" id="sec-master-pw" class="input" placeholder="Leave blank for owner-locked PDFs" />
+                                    <button type="button" id="sec-master-pw-toggle" class="btn btn-ghost btn-sm">Show</button>
+                                </div>
+                                <button type="button" id="sec-sample-pw-hint" class="hint-pill" hidden>Use sample password: <code>secret123</code></button>
+                            </div>
+
+                            <div class="field-group">
+                                <span class="field-label">Compression Mode</span>
+                                <div class="radio-cards">
+                                    <label class="radio-card">
+                                        <input type="radio" name="sec-compression" value="lossless" checked />
+                                        <div>
+                                            <strong>Lossless (100% Vector)</strong>
+                                            <span>QPDF Flate L9 + object streams + image opt</span>
+                                        </div>
+                                    </label>
+                                    <label class="radio-card">
+                                        <input type="radio" name="sec-compression" value="balanced" />
+                                        <div>
+                                            <strong>Balanced (150 DPI)</strong>
+                                            <span>Raster downsample — ideal for scans</span>
+                                        </div>
+                                    </label>
+                                    <label class="radio-card">
+                                        <input type="radio" name="sec-compression" value="maximum" />
+                                        <div>
+                                            <strong>Maximum (96 DPI)</strong>
+                                            <span>Smallest portal upload size</span>
+                                        </div>
+                                    </label>
+                                    <label class="radio-card">
+                                        <input type="radio" name="sec-compression" value="off" />
+                                        <div>
+                                            <strong>Off (Unlock Only)</strong>
+                                            <span>Remove passwords &amp; locks without recompressing</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-lock-panel" class="form-stack" hidden>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-user-pw">User (Open) Password <span class="muted">(optional)</span></label>
+                                <input type="password" id="sec-user-pw" class="input" placeholder="Required to open PDF" />
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-owner-pw">Owner (Permissions) Password <span class="muted">(optional)</span></label>
+                                <input type="password" id="sec-owner-pw" class="input" placeholder="Restricts print/edit/copy even without open pw" />
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-cipher">Encryption Cipher</label>
+                                <select id="sec-cipher" class="input">
+                                    <option value="256" selected>256-bit AES (R6 — Modern)</option>
+                                    <option value="128">128-bit AES (R4 — Legacy Compatible)</option>
+                                </select>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-perm-print">Printing Permission</label>
+                                <select id="sec-perm-print" class="input">
+                                    <option value="full" selected>High-Res Printing Allowed</option>
+                                    <option value="low">Low-Res (150 DPI) Only</option>
+                                    <option value="none">Disallow Printing</option>
+                                </select>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-perm-modify">Modifications Permission</label>
+                                <select id="sec-perm-modify" class="input">
+                                    <option value="none">Disallow All Modifications</option>
+                                    <option value="form">Form Filling &amp; Signing Only</option>
+                                    <option value="annotate">Commenting &amp; Forms</option>
+                                    <option value="all" selected>Allow All Modifications</option>
+                                </select>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-perm-extract">Text &amp; Image Copying</label>
+                                <select id="sec-perm-extract" class="input">
+                                    <option value="n">Disallow Copying</option>
+                                    <option value="y" selected>Allow Copying</option>
+                                </select>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="sec-lock-compression">Pre-Encrypt Compression</label>
+                                <select id="sec-lock-compression" class="input">
+                                    <option value="off" selected>Off</option>
+                                    <option value="lossless">Lossless (QPDF Flate L9)</option>
+                                    <option value="balanced">Balanced (150 DPI)</option>
+                                    <option value="maximum">Maximum (96 DPI)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <hr class="divider" />
+
+                        <div class="form-stack">
+                            <div class="field-group">
+                                <label class="field-label" for="sec-suffix">Output Filename Suffix</label>
+                                <select id="sec-suffix" class="input">
+                                    <option value="_unlocked">_unlocked</option>
+                                    <option value="_compressed">_compressed</option>
+                                    <option value="_decrypted">_decrypted</option>
+                                    <option value="_locked">_locked</option>
+                                    <option value="">Keep original filename</option>
+                                </select>
+                            </div>
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="sec-auto-download" />
+                                <span>Auto-download each file on completion</span>
+                            </label>
+                            <button type="button" id="sec-run-btn" class="btn btn-primary btn-block" disabled>Unlock / Compress PDF</button>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <!-- WORKSPACE 2: Merge, Split & Visual Page Organizer -->
+        <section id="ws-organizer" class="workspace-panel" hidden aria-label="Merge, Split and Page Organizer">
+            <div class="ws-grid-2col">
+                <div class="ws-main-col">
+                    <div class="panel-card">
+                        <div class="dropzone-header">
+                            <div>
+                                <h2 class="panel-title">Visual Page Organizer</h2>
+                                <p class="panel-sub">Combine PDFs &amp; images (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>). Owner-locked PDFs unlock automatically.</p>
+                            </div>
+                            <div class="header-btn-group">
+                                <button type="button" id="org-sample-btn" class="btn btn-secondary btn-sm">Load 2 Sample Multi-Page PDFs</button>
+                                <button type="button" id="org-clear-btn" class="btn btn-ghost btn-sm" disabled>Clear</button>
+                            </div>
+                        </div>
+
+                        <div id="org-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop PDFs or images to organize">
+                            <input type="file" id="org-file-input" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" multiple hidden />
+                            <div class="dropzone-prompt">
+                                <strong>Drop PDFs or Images here</strong> to append pages into the grid
+                            </div>
+                        </div>
+
+                        <div class="org-toolbar">
+                            <span id="org-count-label" class="count-pill">No pages loaded</span>
+                            <div class="org-toolbar-btns">
+                                <button type="button" id="org-select-all" class="btn btn-ghost btn-xs" disabled>Select All</button>
+                                <button type="button" id="org-deselect-all" class="btn btn-ghost btn-xs" disabled>Deselect</button>
+                                <button type="button" id="org-nudge-left" class="btn btn-ghost btn-xs" title="Nudge selected left (←)" disabled>← Nudge</button>
+                                <button type="button" id="org-nudge-right" class="btn btn-ghost btn-xs" title="Nudge selected right (→)" disabled>Nudge →</button>
+                                <button type="button" id="org-rotate-selected" class="btn btn-ghost btn-xs" disabled>↻ Rotate 90°</button>
+                                <button type="button" id="org-delete-selected" class="btn btn-ghost btn-xs" disabled>Delete Selected</button>
+                                <button type="button" id="org-reverse-btn" class="btn btn-ghost btn-xs" disabled>Reverse Order</button>
+                                <button type="button" id="org-add-blank-btn" class="btn btn-secondary btn-xs">+ Blank Page</button>
+                            </div>
+                        </div>
+
+                        <div id="org-empty-state" class="empty-state">
+                            Drop PDFs or images above, click <strong>Load 2 Sample Multi-Page PDFs</strong>, or add a blank A4 page.
+                        </div>
+                        <div id="org-grid" class="org-grid"></div>
+                    </div>
+                </div>
+
+                <aside class="ws-side-col">
+                    <div class="panel-card sticky-panel form-stack">
+                        <div class="side-section">
+                            <h3 class="side-title">Merge &amp; Export</h3>
+                            <p class="side-desc">100% lossless assembly preserving original vector text and links.</p>
+                            <div class="btn-stack">
+                                <button type="button" id="org-merge-download-btn" class="btn btn-primary btn-block" disabled>Merge &amp; Download PDF</button>
+                                <button type="button" id="org-merge-preview-btn" class="btn btn-secondary btn-block" disabled>Preview Merged PDF</button>
+                                <button type="button" id="org-send-editor-btn" class="btn btn-ghost btn-block" disabled>Send Merged to Edit / Fill / Sign →</button>
+                            </div>
+                        </div>
+
+                        <hr class="divider" />
+
+                        <div class="side-section">
+                            <h3 class="side-title">Extract Page Range</h3>
+                            <label class="field-label" for="org-range-input">Pages (e.g. <code>1-3, 5</code>)</label>
+                            <input type="text" id="org-range-input" class="input input-sm" placeholder="1-3, 5" />
+                            <div class="btn-row">
+                                <button type="button" id="org-extract-download-btn" class="btn btn-secondary btn-sm" disabled>Extract PDF</button>
+                                <button type="button" id="org-extract-preview-btn" class="btn btn-ghost btn-sm" disabled>Preview</button>
+                            </div>
+                        </div>
+
+                        <hr class="divider" />
+
+                        <div class="side-section">
+                            <h3 class="side-title">Burst / Split to .ZIP</h3>
+                            <label class="field-label" for="org-burst-size">Split every N pages</label>
+                            <div class="input-with-btn">
+                                <input type="number" id="org-burst-size" class="input input-sm" value="1" min="1" />
+                                <button type="button" id="org-burst-zip-btn" class="btn btn-secondary btn-sm" disabled>Split to .ZIP</button>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <!-- WORKSPACE 3 & 4 SHARED SHELL -->
+        <section id="ws-editor-shell" class="workspace-panel" hidden aria-label="Fill, Sign, Edit Text and Redact PDF">
+            <div class="ed-shell-layout">
+                <!-- WORKSPACE 3 SIDEBAR: Fill Forms & Sign -->
+                <aside id="ws-fill-sidebar" class="ed-sidebar panel-card">
+                    <div class="side-header-actions">
+                        <input type="file" id="ed3-file-input" accept=".pdf,application/pdf" hidden />
+                        <button type="button" id="ed3-upload-btn" class="btn btn-secondary btn-sm">Open PDF</button>
+                        <button type="button" id="ed3-sample-btn" class="btn btn-ghost btn-sm">Load Sample Fillable NDA</button>
+                    </div>
+
+                    <div class="side-section">
+                        <div class="side-title-row">
+                            <h3 class="side-title">Interactive AcroForm</h3>
+                            <span id="ed3-form-count" class="badge badge-neutral">0 fields</span>
+                        </div>
+                        <div id="ed3-form-list" class="form-fields-scroll"></div>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="ed3-flatten-cb" />
+                            <span>Flatten form fields on export</span>
+                        </label>
+                    </div>
+
+                    <hr class="divider" />
+
+                    <div class="side-section">
+                        <h3 class="side-title">Signature &amp; Stamp Studio</h3>
+                        <div class="segmented-control segmented-sm" role="group" aria-label="Signature input method">
+                            <button type="button" class="seg-btn js-sig-tab is-active" data-sig-tab="draw">Draw</button>
+                            <button type="button" class="seg-btn js-sig-tab" data-sig-tab="type">Type</button>
+                            <button type="button" class="seg-btn js-sig-tab" data-sig-tab="upload">Image</button>
+                        </div>
+
+                        <div class="ink-palette" aria-label="Signature ink color">
+                            <span class="ink-label">Ink:</span>
+                            <button type="button" class="ink-swatch js-sig-color is-active" data-color="#181818" style="background:#181818" title="Black"></button>
+                            <button type="button" class="ink-swatch js-sig-color" data-color="#1d4ed8" style="background:#1d4ed8" title="Royal Blue"></button>
+                            <button type="button" class="ink-swatch js-sig-color" data-color="#b91c1c" style="background:#b91c1c" title="Crimson"></button>
+                        </div>
+
+                        <div id="ed3-sig-draw-pane" class="sig-pane">
+                            <canvas id="ed3-sig-pad" class="sig-pad-canvas" width="440" height="160"></canvas>
+                            <div class="btn-row">
+                                <button type="button" id="ed3-sig-clear" class="btn btn-ghost btn-xs">Clear Pad</button>
+                                <button type="button" id="ed3-sig-place-draw" class="btn btn-secondary btn-sm">Place Signature</button>
+                            </div>
+                        </div>
+
+                        <div id="ed3-sig-type-pane" class="sig-pane" hidden>
+                            <input type="text" id="ed3-sig-type-input" class="input input-sm" value="Lohit Krishnan" placeholder="Type full name or stamp" />
+                            <div class="radio-row-compact">
+                                <label><input type="radio" name="ed3-sig-style" value="cursive" checked /> Cursive</label>
+                                <label><input type="radio" name="ed3-sig-style" value="serif" /> Executive Serif</label>
+                                <label><input type="radio" name="ed3-sig-style" value="stamp" /> Official Stamp</label>
+                            </div>
+                            <div class="sig-type-preview-box">
+                                <img id="ed3-sig-type-preview" alt="Typed signature preview" />
+                            </div>
+                            <button type="button" id="ed3-sig-place-type" class="btn btn-secondary btn-sm btn-block">Place Typed Signature</button>
+                        </div>
+
+                        <div id="ed3-sig-upload-pane" class="sig-pane" hidden>
+                            <input type="file" id="ed3-sig-upload-input" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="input input-sm" />
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="ed3-sig-remove-white" checked />
+                                <span>Auto-remove white paper background</span>
+                            </label>
+                            <button type="button" id="ed3-sig-place-upload" class="btn btn-secondary btn-sm btn-block" disabled>Place Image Stamp</button>
+                        </div>
+                    </div>
+
+                    <hr class="divider" />
+
+                    <div class="btn-stack">
+                        <button type="button" class="btn btn-secondary btn-block js-ed-preview" disabled>Preview Compiled PDF</button>
+                        <button type="button" class="btn btn-primary btn-block js-ed-download" disabled>Download Edited PDF</button>
+                    </div>
+                </aside>
+
+                <!-- WORKSPACE 4 SIDEBAR: Edit Text, Overlay, Whiteout & Redact -->
+                <aside id="ws-redact-sidebar" class="ed-sidebar panel-card" hidden>
+                    <div class="side-header-actions">
+                        <input type="file" id="ed4-file-input" accept=".pdf,application/pdf" hidden />
+                        <button type="button" id="ed4-upload-btn" class="btn btn-secondary btn-sm">Open PDF</button>
+                        <button type="button" id="ed4-sample-btn" class="btn btn-ghost btn-sm">Load Sample Confidential PDF</button>
+                    </div>
+
+                    <div class="side-section">
+                        <h3 class="side-title">Edit &amp; Redact Tools</h3>
+                        <div class="tool-grid">
+                            <button type="button" class="tool-btn js-ed-tool is-active" data-tool="select">Select / Move</button>
+                            <button type="button" class="tool-btn js-ed-tool tool-highlight" data-tool="text-edit">✎ Edit PDF Text</button>
+                            <button type="button" class="tool-btn js-ed-tool" data-tool="text">+ Freeform Text</button>
+                            <button type="button" class="tool-btn js-ed-tool" data-tool="whiteout">▭ Whiteout Mask</button>
+                            <button type="button" class="tool-btn js-ed-tool tool-danger" data-tool="redaction">■ Redact Box</button>
+                            <button type="button" id="ed4-verified-btn" class="tool-btn">✓ Verified Stamp</button>
+                        </div>
+                        <div class="quick-insert-row">
+                            <button type="button" id="ed4-add-whiteout-btn" class="btn btn-ghost btn-xs">+ Insert Whiteout</button>
+                            <button type="button" id="ed4-add-redaction-btn" class="btn btn-ghost btn-xs">+ Insert Redaction</button>
+                        </div>
+                        <label class="checkbox-row" title="Rasterizes redacted pages at 200 DPI JPEG and strips metadata so underlying text cannot be copied">
+                            <input type="checkbox" id="ed4-burnin-cb" checked />
+                            <span><strong>Burn-In / Sanitize</strong> redacted pages (200 DPI JPEG)</span>
+                        </label>
+                    </div>
+
+                    <!-- Contextual Inspector for Selected Text Edit or Overlay -->
+                    <div id="ed4-inspector" class="inspector-card" hidden>
+                        <div class="side-title-row">
+                            <h4 id="ed4-insp-title" class="insp-title">Selected Item</h4>
+                            <button type="button" id="ed4-insp-delete" class="btn btn-ghost btn-xs">Delete</button>
+                        </div>
+                        <div id="ed4-insp-text-controls" class="form-stack-sm">
+                            <textarea id="ed4-insp-text" class="input input-sm" rows="2" placeholder="Text content"></textarea>
+                            <div class="insp-row">
+                                <select id="ed4-insp-font" class="input input-xs">
+                                    <option value="Helvetica">Sans (Helvetica)</option>
+                                    <option value="TimesRoman">Serif (Times)</option>
+                                    <option value="Courier">Mono (Courier)</option>
+                                </select>
+                                <input type="number" id="ed4-insp-size" class="input input-xs insp-size" min="8" max="64" value="12" title="Font size (pt)" />
+                                <button type="button" id="ed4-insp-bold" class="btn btn-ghost btn-xs" title="Bold"><strong>B</strong></button>
+                                <button type="button" id="ed4-insp-italic" class="btn btn-ghost btn-xs" title="Italic"><em>I</em></button>
+                            </div>
+                            <div class="insp-row">
+                                <select id="ed4-insp-color" class="input input-xs">
+                                    <option value="#1c1a17">Black</option>
+                                    <option value="#1d4ed8">Blue</option>
+                                    <option value="#b91c1c">Red</option>
+                                    <option value="#15803d">Green</option>
+                                    <option value="custom">Matched Color</option>
+                                </select>
+                                <label class="checkbox-row-sm">
+                                    <input type="checkbox" id="ed4-insp-bg-toggle" />
+                                    <span>Opaque BG</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="divider" />
+
+                    <div class="side-section">
+                        <div class="side-title-row">
+                            <h3 class="side-title">Edits &amp; Overlays</h3>
+                            <span id="ed4-overlay-count" class="badge badge-neutral">0</span>
+                        </div>
+                        <div class="btn-row">
+                            <button type="button" id="ed4-undo-btn" class="btn btn-ghost btn-xs" disabled>↶ Undo</button>
+                            <button type="button" id="ed4-redo-btn" class="btn btn-ghost btn-xs" disabled>↷ Redo</button>
+                            <button type="button" id="ed4-clear-overlays-btn" class="btn btn-ghost btn-xs" disabled>Clear All</button>
+                        </div>
+                        <div id="ed4-overlay-list" class="overlay-list-scroll"></div>
+                    </div>
+
+                    <hr class="divider" />
+
+                    <div class="btn-stack">
+                        <button type="button" class="btn btn-secondary btn-block js-ed-preview" disabled>Preview Compiled PDF</button>
+                        <button type="button" class="btn btn-primary btn-block js-ed-download" disabled>Download Edited PDF</button>
+                    </div>
+                </aside>
+
+                <!-- SHARED MULTI-PAGE INTERACTIVE STAGE -->
+                <div id="ed-stage-root" class="ed-stage-pane">
+                    <div class="ed-stage-topbar">
+                        <div class="ed-doc-info">
+                            <strong id="ed-doc-name">No PDF open</strong>
+                            <span id="ed-doc-meta" class="muted">Drop a PDF or choose a sample from the sidebar</span>
+                        </div>
+                        <div class="ed-stage-controls">
+                            <span id="ed-tool-status" class="tool-status-pill"></span>
+                            <div class="zoom-controls">
+                                <button type="button" id="ed-zoom-out" class="btn btn-ghost btn-xs" disabled>−</button>
+                                <span id="ed-zoom-label" class="zoom-label">105%</span>
+                                <button type="button" id="ed-zoom-in" class="btn btn-ghost btn-xs" disabled>+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="ed-stage-scroll" class="ed-stage-scroll">
+                        <div id="ed-stage-empty" class="ed-stage-empty" tabindex="0" role="button">
+                            <input type="file" id="ed-stage-file-input" accept=".pdf,application/pdf" hidden />
+                            <div class="ed-empty-inner">
+                                <h3>Open a PDF to Fill, Sign, Edit Text or Redact</h3>
+                                <p>Drop a PDF here, paste with <kbd>Ctrl+V</kbd>, or use the sample documents in the sidebar.</p>
+                                <p class="muted">Changes made in Workspace 3 (Forms &amp; Signatures) and Workspace 4 (In-Place Text Edit, Overlays &amp; Redaction) share this document and compile together on export.</p>
+                            </div>
+                        </div>
+                        <div id="ed-stage-pages" class="ed-stage-pages" hidden></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- UMD / global libraries loaded synchronously before ES module app -->
+    <script src="./vendor/qpdf.js"></script>
+    <script src="./vendor/pdf-lib.min.js"></script>
+    <script src="./vendor/jspdf.umd.min.js"></script>
+    <script type="module" src="./js/app.js"></script>
+</body>
+</html>
