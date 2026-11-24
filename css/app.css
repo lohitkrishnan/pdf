@@ -1532,3 +1532,11 @@ code, kbd {
         max-height: none;
     }
 }
+
+/* Multi-line AcroForm text fields */
+.ed-widget-textarea {
+    resize: none;
+    padding: 2px 3px;
+    line-height: 1.2;
+    overflow: auto;
+}

@@ -131,7 +131,17 @@ export function initEditorWorkspaces({
         return list.map((o) => ({ ...o }));
     }
 
+    // Typing and size changes fire many events per edit; record one undo step per editing
+    // session (same item + same kind of change) instead of none or one per keystroke.
+    let undoCoalesceKey = null;
+    function pushUndoCoalesced(key) {
+        if (undoCoalesceKey === key) return;
+        pushUndo();
+        undoCoalesceKey = key;
+    }
+
     function pushUndo() {
+        undoCoalesceKey = null;
         state.undoStack.push(cloneOverlays(state.overlays));
         if (state.undoStack.length > 60) state.undoStack.shift();
         state.redoStack = [];
@@ -140,6 +150,7 @@ export function initEditorWorkspaces({
 
     function undo() {
         if (state.undoStack.length === 0) return;
+        undoCoalesceKey = null;
         state.redoStack.push(cloneOverlays(state.overlays));
         state.overlays = state.undoStack.pop();
         state.selectedOverlayId = null;
@@ -152,6 +163,7 @@ export function initEditorWorkspaces({
 
     function redo() {
         if (state.redoStack.length === 0) return;
+        undoCoalesceKey = null;
         state.undoStack.push(cloneOverlays(state.overlays));
         state.overlays = state.redoStack.pop();
         state.selectedOverlayId = null;
@@ -298,7 +310,9 @@ export function initEditorWorkspaces({
             const name = field.getName();
             if (field instanceof PDFTextField) {
                 const val = field.getText() || '';
-                state.formFields.push({ name, type: 'text', value: val });
+                let multiline = false;
+                try { multiline = field.isMultiline(); } catch { /* ignore */ }
+                state.formFields.push({ name, type: 'text', value: val, multiline });
                 state.formValues[name] = val;
             } else if (field instanceof PDFCheckBox) {
                 const val = field.isChecked();
@@ -307,13 +321,14 @@ export function initEditorWorkspaces({
             } else if (field instanceof PDFDropdown) {
                 const options = field.getOptions();
                 const sel = field.getSelected();
-                const val = sel && sel.length > 0 ? sel[0] : (options[0] || '');
+                // An unselected dropdown stays blank; it must not silently become the first option.
+                const val = sel && sel.length > 0 ? sel[0] : '';
                 state.formFields.push({ name, type: 'dropdown', options, value: val });
                 state.formValues[name] = val;
             } else if (field instanceof PDFOptionList) {
                 const options = field.getOptions();
                 const sel = field.getSelected();
-                const val = sel && sel.length > 0 ? sel[0] : (options[0] || '');
+                const val = sel && sel.length > 0 ? sel[0] : '';
                 state.formFields.push({ name, type: 'optionlist', options, value: val });
                 state.formValues[name] = val;
             } else if (field instanceof PDFRadioGroup) {
@@ -678,9 +693,9 @@ export function initEditorWorkspaces({
             box.title = `Form field: ${field.name}`;
 
             if (field.type === 'text') {
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'ed-widget-input';
+                const input = document.createElement(field.multiline ? 'textarea' : 'input');
+                if (!field.multiline) input.type = 'text';
+                input.className = field.multiline ? 'ed-widget-input ed-widget-textarea' : 'ed-widget-input';
                 input.value = state.formValues[field.name] ?? '';
                 input.dataset.field = field.name;
                 input.addEventListener('input', (e) => {
@@ -704,6 +719,7 @@ export function initEditorWorkspaces({
                 const sel = document.createElement('select');
                 sel.className = 'ed-widget-select';
                 sel.dataset.field = field.name;
+                if (field.type !== 'radio') sel.appendChild(makeBlankOption(state.formValues[field.name]));
                 for (const opt of field.options || []) {
                     const o = document.createElement('option');
                     o.value = opt;
@@ -830,6 +846,7 @@ export function initEditorWorkspaces({
                 const sel = document.createElement('select');
                 sel.className = 'input input-sm';
                 sel.dataset.sidebarField = field.name;
+                sel.appendChild(makeBlankOption(state.formValues[field.name]));
                 for (const opt of field.options || []) {
                     const o = document.createElement('option');
                     o.value = opt;
@@ -846,8 +863,9 @@ export function initEditorWorkspaces({
                 const label = document.createElement('label');
                 label.className = 'field-label';
                 label.textContent = labelText;
-                const input = document.createElement('input');
-                input.type = 'text';
+                const input = document.createElement(field.multiline ? 'textarea' : 'input');
+                if (field.multiline) input.rows = 3;
+                else input.type = 'text';
                 input.className = 'input input-sm';
                 input.value = state.formValues[field.name] ?? '';
                 input.dataset.sidebarField = field.name;
@@ -861,6 +879,14 @@ export function initEditorWorkspaces({
             row.addEventListener('focusin', () => scrollToFieldWidget(field.name));
             formListEl.appendChild(row);
         }
+    }
+
+    function makeBlankOption(currentValue) {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = '— Select —';
+        if (!currentValue) o.selected = true;
+        return o;
     }
 
     function scrollToFieldWidget(fieldName) {
@@ -978,6 +1004,7 @@ export function initEditorWorkspaces({
             italic,
             fontSizePt,
             color: textColor,
+            matchedColor: textColor,
             maskColor,
             hasBg: true,
             // Distance from the top of the box to the first line's original baseline, so the
@@ -1185,6 +1212,7 @@ export function initEditorWorkspaces({
 
                     ta.addEventListener('pointerdown', (ev) => ev.stopPropagation());
                     ta.addEventListener('input', (ev) => {
+                        pushUndoCoalesced(`text:${item.id}`);
                         item.text = ev.target.value;
                         if (state.selectedOverlayId === item.id) {
                             inspTextInput.value = item.text;
@@ -1266,6 +1294,23 @@ export function initEditorWorkspaces({
                 if (e.target.closest('.ed-resize-handle') || e.target.closest('.ed-box-delete')) return;
                 if (state.editingTextId === item.id && e.target.tagName === 'TEXTAREA') return;
                 e.stopPropagation();
+
+                // The first click re-renders the overlay layer, so the browser never sees two
+                // clicks on the same element and 'dblclick' does not fire. Detect it here instead
+                // (this also gives touch screens double-tap to edit).
+                const now = performance.now();
+                const isTextual = item.type === 'text-edit' || item.type === 'text';
+                if (isTextual && lastOverlayPointerDown.id === item.id && now - lastOverlayPointerDown.t < 400) {
+                    lastOverlayPointerDown = { id: null, t: 0 };
+                    state.selectedOverlayId = item.id;
+                    state.editingTextId = item.id;
+                    renderPageOverlays(meta);
+                    renderInspector();
+                    renderOverlaySidebar();
+                    return;
+                }
+                lastOverlayPointerDown = { id: item.id, t: now };
+
                 state.selectedOverlayId = item.id;
                 if (state.editingTextId !== item.id) {
                     state.editingTextId = null;
@@ -1278,6 +1323,8 @@ export function initEditorWorkspaces({
             layer.appendChild(box);
         }
     }
+
+    let lastOverlayPointerDown = { id: null, t: 0 };
 
     function startDragOverlay(e, meta, item) {
         const rect = meta.wrapperEl.getBoundingClientRect();
@@ -1383,7 +1430,11 @@ export function initEditorWorkspaces({
             inspSizeInput.value = String(item.fontSizePt);
             inspBoldBtn.classList.toggle('is-active', Boolean(item.bold));
             inspItalicBtn.classList.toggle('is-active', Boolean(item.italic));
-            inspColorSelect.value = findPresetOrCustom(item.color);
+            const customOpt = inspColorSelect.querySelector('option[value="custom"]');
+            if (customOpt) customOpt.disabled = !item.matchedColor;
+            inspColorSelect.value = item.matchedColor && item.color === item.matchedColor
+                ? 'custom'
+                : findPresetOrCustom(item.color);
             inspBgToggle.checked = Boolean(item.hasBg);
         }
     }
@@ -1466,12 +1517,22 @@ export function initEditorWorkspaces({
         return bestIdx;
     }
 
-    function placeOverlayCenter({ type, nw, nh, extra = {} }) {
+    function placeOverlayCenter({ type, nw, nh, aspect = null, extra = {} }) {
         if (!state.bytes || state.pagesMeta.length === 0) {
             toast('Open a PDF first before placing stamps or overlays.', 'warn');
             return;
         }
         const pageIndex = getMostVisiblePageIndex();
+        const pageMeta = state.pagesMeta[pageIndex];
+        if (aspect && pageMeta) {
+            // Size from the actual page proportions (landscape, rotated, letter...), not a fixed A4 ratio.
+            const pageRatio = pageMeta.baseVp.width / pageMeta.baseVp.height;
+            nh = (nw * pageRatio) / aspect;
+            if (nh > 0.4) {
+                nw *= 0.4 / nh;
+                nh = 0.4;
+            }
+        }
         pushUndo();
         const cascadeOffset = (state.overlays.length % 5) * 0.055;
         const item = {
@@ -1556,11 +1617,12 @@ export function initEditorWorkspaces({
             const cropped = cropTransparentCanvas(sigCanvas);
             const aspect = cropped.width / Math.max(1, cropped.height);
             const nw = Math.min(0.32, Math.max(0.14, aspect * 0.06));
-            const nh = Math.max(0.04, nw / aspect * (595 / 842));
+            const nh = nw / aspect; // refined from the real page size in placeOverlayCenter
             placeOverlayCenter({
                 type: 'signature',
                 nw,
                 nh,
+                aspect,
                 extra: { dataUrl: cropped.toDataURL('image/png'), label: 'Drawn Signature' },
             });
             toast('Placed drawn signature on page. Drag or resize to position.', 'ok');
@@ -1626,23 +1688,30 @@ export function initEditorWorkspaces({
         // Step A: Write AcroForm values & optionally flatten
         if (state.formFields.length > 0) {
             const form = pdfDoc.getForm();
+            const unicodeFields = [];
             for (const f of state.formFields) {
                 const val = state.formValues[f.name];
                 try {
                     const fieldObj = form.getField(f.name);
                     if (fieldObj instanceof PDFTextField) {
                         fieldObj.setText(String(val ?? ''));
+                        if (!isWinAnsiText(String(val ?? ''))) unicodeFields.push(fieldObj);
                     } else if (fieldObj instanceof PDFCheckBox) {
                         if (val) fieldObj.check();
                         else fieldObj.uncheck();
                     } else if (fieldObj instanceof PDFDropdown || fieldObj instanceof PDFOptionList) {
                         if (val) fieldObj.select(String(val));
+                        else fieldObj.clear();
                     } else if (fieldObj instanceof PDFRadioGroup) {
                         if (val) fieldObj.select(String(val));
+                        else fieldObj.clear();
                     }
                 } catch {
                     // skip non-editable or unmapped fields gracefully
                 }
+            }
+            if (unicodeFields.length > 0) {
+                await applyUnicodeFieldAppearances(pdfDoc, unicodeFields);
             }
             if (state.flattenFields) {
                 form.flatten();
@@ -1720,24 +1789,18 @@ export function initEditorWorkspaces({
             } else if (item.type === 'signature') {
                 const pngBytes = dataUrlToUint8Array(item.dataUrl);
                 const imgEmbed = await pdfDoc.embedPng(pngBytes);
-                pdfPage.drawImage(imgEmbed, {
-                    x: box.x,
-                    y: box.y,
-                    width: box.width,
-                    height: box.height,
-                    rotate: degrees(meta.rotate || 0),
-                });
+                // Fit inside the box keeping the image's proportions, like object-fit: contain on screen.
+                const v = visualRect(meta, item);
+                const fit = Math.min(v.w / imgEmbed.width, v.h / imgEmbed.height);
+                const fw = imgEmbed.width * fit;
+                const fh = imgEmbed.height * fit;
+                drawImageInVisualRect(pdfPage, meta, imgEmbed, v.x + (v.w - fw) / 2, v.y + (v.h - fh) / 2, fw, fh, degrees);
             } else if (item.type === 'verified') {
                 const stampCanvas = renderVerifiedStampCanvas(item.text);
                 const pngBytes = dataUrlToUint8Array(stampCanvas.toDataURL('image/png'));
                 const imgEmbed = await pdfDoc.embedPng(pngBytes);
-                pdfPage.drawImage(imgEmbed, {
-                    x: box.x,
-                    y: box.y,
-                    width: box.width,
-                    height: box.height,
-                    rotate: degrees(meta.rotate || 0),
-                });
+                const v = visualRect(meta, item);
+                drawImageInVisualRect(pdfPage, meta, imgEmbed, v.x, v.y, v.w, v.h, degrees);
             } else if (item.type === 'text-edit' || item.type === 'text') {
                 if (item.hasBg) {
                     pdfPage.drawRectangle({
@@ -1752,8 +1815,9 @@ export function initEditorWorkspaces({
                 const content = item.text || '';
                 if (content.trim().length > 0) {
                     const font = await getStandardFont(item.fontFamily, item.bold, item.italic);
-                    await drawSafePdfText(pdfDoc, pdfPage, meta, box, {
+                    await drawSafePdfText(pdfDoc, pdfPage, meta, visualRect(meta, item), {
                         text: content,
+                        wrapAtPageEdge: item.type === 'text-edit',
                         font,
                         fontFamily: item.fontFamily,
                         bold: item.bold,
@@ -1776,6 +1840,85 @@ export function initEditorWorkspaces({
         }
 
         return compiledBytes;
+    }
+
+    // ---------- Unicode form field support (₹ and other characters outside WinAnsi) ----------
+
+    // Characters the 14 standard PDF fonts can encode (WinAnsiEncoding).
+    const WINANSI_EXTRA = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ');
+    function isWinAnsiText(text) {
+        for (const ch of text) {
+            const c = ch.codePointAt(0);
+            if (c === 9 || c === 10 || c === 13) continue;
+            if (c >= 0x20 && c <= 0x7e) continue;
+            if (c >= 0xa0 && c <= 0xff) continue;
+            if (WINANSI_EXTRA.has(ch)) continue;
+            return false;
+        }
+        return true;
+    }
+
+    function loadScriptOnce(src) {
+        return new Promise((resolve, reject) => {
+            const el = document.createElement('script');
+            el.src = src;
+            el.onload = () => resolve();
+            el.onerror = () => reject(new Error(`Could not load ${src}`));
+            document.head.appendChild(el);
+        });
+    }
+
+    // fontkit (~750 KB) and Noto Sans (~200 KB) are only fetched the first time a field needs them.
+    let unicodeFontPromise = null;
+    function loadUnicodeFont() {
+        if (!unicodeFontPromise) {
+            unicodeFontPromise = (async () => {
+                if (!window.fontkit) await loadScriptOnce('./vendor/fontkit.umd.min.js');
+                const res = await fetch('./vendor/fonts/NotoSans-Regular.ttf');
+                if (!res.ok) throw new Error('Could not load the Unicode font.');
+                return { fontkit: window.fontkit, bytes: new Uint8Array(await res.arrayBuffer()) };
+            })().catch((err) => {
+                unicodeFontPromise = null;
+                throw err;
+            });
+        }
+        return unicodeFontPromise;
+    }
+
+    // Text fields whose values the standard fonts can't encode (e.g. "₹") get appearances drawn
+    // with an embedded, subset Noto Sans. Without this, pdf-lib throws "WinAnsi cannot encode"
+    // when it generates appearances and the whole export fails.
+    async function applyUnicodeFieldAppearances(pdfDoc, fields) {
+        let font;
+        try {
+            const { fontkit, bytes } = await loadUnicodeFont();
+            pdfDoc.registerFontkit(fontkit);
+            // Embedded whole: pdf-lib's runtime subsetting drops glyphs from this font. The bundled
+            // file is already trimmed to Latin, Greek, Cyrillic, punctuation and currency (~200 KB).
+            font = await pdfDoc.embedFont(bytes, { subset: false });
+        } catch {
+            // Offline or blocked: keep the export working with ASCII stand-ins.
+            for (const field of fields) {
+                const safe = [...(field.getText() || '')]
+                    .map((ch) => (ch === '₹' ? 'Rs.' : isWinAnsiText(ch) ? ch : '?'))
+                    .join('');
+                field.setText(safe);
+            }
+            toast('Could not load the Unicode font, so ₹ was written as "Rs." and other unsupported characters as "?".', 'warn');
+            return;
+        }
+
+        const supported = new Set(font.getCharacterSet());
+        const missing = new Set();
+        for (const field of fields) {
+            for (const ch of field.getText() || '') {
+                if (!/\s/.test(ch) && !supported.has(ch.codePointAt(0))) missing.add(ch);
+            }
+            field.updateAppearances(font);
+        }
+        if (missing.size > 0) {
+            toast(`These characters aren't supported in form fields and may not display: ${[...missing].join(' ')}`, 'warn');
+        }
     }
 
     /**
@@ -1892,71 +2035,122 @@ export function initEditorWorkspaces({
         return new Uint8Array(await fresh.save());
     }
 
-    async function drawSafePdfText(pdfDoc, pdfPage, meta, box, opts) {
-        const lines = opts.text.split(/\r?\n/);
-        const lineHeight = opts.size * 1.2;
+    // Overlay geometry is stored normalized to the page as it appears on screen (pdf.js viewport,
+    // which already includes the page's /Rotate). These helpers work in that visual space and map
+    // anchor points into PDF user space, drawing with the page rotation so the result looks upright.
+    function visualRect(meta, item) {
+        return {
+            x: item.nx * meta.baseVp.width,
+            y: item.ny * meta.baseVp.height,
+            w: item.nw * meta.baseVp.width,
+            h: item.nh * meta.baseVp.height,
+        };
+    }
 
-        // Check if every character encodes cleanly in WinAnsi AND page has 0° rotation
-        let canUseVector = (meta.rotate || 0) === 0;
-        if (canUseVector) {
-            try {
-                for (const line of lines) {
-                    opts.font.encodeText(line);
+    function pageRotation(meta) {
+        return ((meta.baseVp.rotation % 360) + 360) % 360;
+    }
+
+    function drawImageInVisualRect(pdfPage, meta, img, vx, vy, vw, vh, degreesFn) {
+        // The image's own bottom-left corner goes at the visual bottom-left of the rect.
+        const [x, y] = meta.baseVp.convertToPdfPoint(vx, vy + vh);
+        pdfPage.drawImage(img, { x, y, width: vw, height: vh, rotate: degreesFn(pageRotation(meta)) });
+    }
+
+    // Greedy word wrap matching the on-screen box (white-space: pre-wrap; word-break: break-word).
+    function wrapTextLines(text, measure, maxWidth) {
+        const out = [];
+        for (const para of String(text).split(/\r?\n/)) {
+            let line = '';
+            for (const word of para.split(/(?<=\s)/)) {
+                if (measure((line + word).trimEnd()) <= maxWidth) {
+                    line += word;
+                    continue;
                 }
-            } catch {
-                canUseVector = false;
+                if (line.trim()) {
+                    out.push(line.trimEnd());
+                    line = '';
+                }
+                // A single word wider than the box is broken by characters.
+                let chunk = '';
+                for (const ch of word) {
+                    if (chunk && measure((chunk + ch).trimEnd()) > maxWidth) {
+                        out.push(chunk);
+                        chunk = '';
+                    }
+                    chunk += ch;
+                }
+                line = chunk;
             }
+            out.push(line.trimEnd());
+        }
+        return out;
+    }
+
+    async function drawSafePdfText(pdfDoc, pdfPage, meta, v, opts) {
+        const lineHeight = opts.size * 1.2;
+        const baselineFromTop = opts.baselineFromTop ?? opts.size * 0.85;
+        const padX = 1;
+        // Freeform text boxes wrap at their own width. Boxes for edited PDF text are sized tightly to
+        // the original words, so replacement text keeps to one line and only wraps at the page edge.
+        const maxWidth = opts.wrapAtPageEdge
+            ? Math.max(4, meta.baseVp.width - v.x - padX - 4)
+            : Math.max(4, v.w - 2 * padX - 2);
+        const rotate = opts.degreesFn(pageRotation(meta));
+
+        // Vector text when every character encodes in the standard font's WinAnsi encoding.
+        let lines = null;
+        try {
+            lines = wrapTextLines(opts.text, (t) => opts.font.widthOfTextAtSize(t, opts.size), maxWidth);
+            for (const line of lines) opts.font.encodeText(line);
+        } catch {
+            lines = null;
         }
 
-        if (canUseVector) {
+        if (lines) {
             const pdfColor = hexToPdfRgb(opts.colorHex, opts.rgbFn);
-            let cursorY = box.top - (opts.baselineFromTop ?? opts.size * 0.85);
-            for (const line of lines) {
-                if (line.length > 0) {
-                    pdfPage.drawText(line, {
-                        x: box.x + 1,
-                        y: cursorY,
-                        size: opts.size,
-                        font: opts.font,
-                        color: pdfColor,
-                    });
-                }
-                cursorY -= lineHeight;
-            }
+            lines.forEach((line, idx) => {
+                if (!line) return;
+                const [x, y] = meta.baseVp.convertToPdfPoint(v.x + padX, v.y + baselineFromTop + idx * lineHeight);
+                pdfPage.drawText(line, { x, y, size: opts.size, font: opts.font, color: pdfColor, rotate });
+            });
             return;
         }
 
-        // High-DPI transparent PNG fallback for Unicode glyphs (e.g. ✓, ₹) or rotated pages
-        const scale = 4;
-        const c = document.createElement('canvas');
-        c.width = Math.max(4, Math.ceil(box.width * scale));
-        c.height = Math.max(4, Math.ceil(box.height * scale));
-        const ctx = c.getContext('2d');
-        ctx.scale(scale, scale);
-
+        // High-DPI transparent PNG fallback for characters the standard fonts can't encode (e.g. ✓, ₹)
         const fontCss =
             opts.fontFamily === 'TimesRoman'
                 ? '"Times New Roman", Times, serif'
                 : opts.fontFamily === 'Courier'
                     ? '"Courier New", Courier, monospace'
                     : 'Helvetica, Arial, sans-serif';
-        ctx.font = `${opts.italic ? 'italic ' : ''}${opts.bold ? '700 ' : '400 '}${opts.size}px ${fontCss}`;
-        ctx.fillStyle = opts.colorHex;
-        ctx.textBaseline = 'top';
+        const cssFont = `${opts.italic ? 'italic ' : ''}${opts.bold ? '700 ' : '400 '}${opts.size}px ${fontCss}`;
 
-        lines.forEach((line, idx) => {
-            ctx.fillText(line, 1, idx * lineHeight + 1);
+        const measureCtx = document.createElement('canvas').getContext('2d');
+        measureCtx.font = cssFont;
+        const pngLines = wrapTextLines(opts.text, (t) => measureCtx.measureText(t).width, maxWidth);
+        // The image is at least the box, and wider/taller if the text needs it (edited lines may
+        // run past their original box, exactly as the vector path draws them).
+        const longest = Math.max(0, ...pngLines.map((t) => measureCtx.measureText(t).width));
+        const drawW = Math.max(v.w, Math.min(longest + 2 * padX + 1, meta.baseVp.width - v.x));
+        const drawH = Math.max(v.h, baselineFromTop + (pngLines.length - 1) * lineHeight + opts.size * 0.3);
+
+        const scale = 4;
+        const c = document.createElement('canvas');
+        c.width = Math.max(4, Math.ceil(drawW * scale));
+        c.height = Math.max(4, Math.ceil(drawH * scale));
+        const ctx = c.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.font = cssFont;
+        ctx.fillStyle = opts.colorHex;
+        ctx.textBaseline = 'alphabetic';
+        pngLines.forEach((line, idx) => {
+            ctx.fillText(line, padX, baselineFromTop + idx * lineHeight);
         });
 
         const pngBytes = dataUrlToUint8Array(c.toDataURL('image/png'));
         const embed = await pdfDoc.embedPng(pngBytes);
-        pdfPage.drawImage(embed, {
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-            rotate: opts.degreesFn(meta.rotate || 0),
-        });
+        drawImageInVisualRect(pdfPage, meta, embed, v.x, v.y, drawW, drawH, opts.degreesFn);
     }
 
     function renderVerifiedStampCanvas(text) {
@@ -2108,11 +2302,12 @@ export function initEditorWorkspaces({
         const cropped = renderTypedSignatureCanvas(text, state.sigTypeStyle, state.sigColor);
         const aspect = cropped.width / Math.max(1, cropped.height);
         const nw = Math.min(0.35, Math.max(0.16, aspect * 0.055));
-        const nh = Math.max(0.038, nw / aspect * (595 / 842));
+        const nh = nw / aspect; // refined from the real page size in placeOverlayCenter
         placeOverlayCenter({
             type: 'signature',
             nw,
             nh,
+            aspect,
             extra: { dataUrl: cropped.toDataURL('image/png'), label: `Typed: ${text}` },
         });
         toast('Placed typed signature on page.', 'ok');
@@ -2141,11 +2336,12 @@ export function initEditorWorkspaces({
         const img = await loadImageFromUrl(dataUrl);
         const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
         const nw = 0.24;
-        const nh = Math.max(0.04, nw / aspect * (595 / 842));
+        const nh = nw / aspect; // refined from the real page size in placeOverlayCenter
         placeOverlayCenter({
             type: 'signature',
             nw,
             nh,
+            aspect,
             extra: { dataUrl, label: 'Image Stamp' },
         });
     });
@@ -2193,6 +2389,7 @@ export function initEditorWorkspaces({
     inspTextInput.addEventListener('input', (e) => {
         const item = getSelectedOverlay();
         if (!item) return;
+        pushUndoCoalesced(`text:${item.id}`);
         item.text = e.target.value;
         const meta = state.pagesMeta[item.pageIndex];
         if (meta) {
@@ -2213,6 +2410,7 @@ export function initEditorWorkspaces({
     inspSizeInput.addEventListener('input', (e) => {
         const item = getSelectedOverlay();
         if (!item) return;
+        pushUndoCoalesced(`size:${item.id}`);
         item.fontSizePt = Math.max(8, Math.min(64, Number(e.target.value) || 12));
         renderAllPageOverlays();
     });
@@ -2234,9 +2432,16 @@ export function initEditorWorkspaces({
     });
     inspColorSelect.addEventListener('change', (e) => {
         const item = getSelectedOverlay();
-        if (!item || e.target.value === 'custom') return;
-        pushUndo();
-        item.color = e.target.value;
+        if (!item) return;
+        if (e.target.value === 'custom') {
+            // "Matched Color" restores the ink colour sampled from the original PDF text.
+            if (!item.matchedColor || item.matchedColor === item.color) return;
+            pushUndo();
+            item.color = item.matchedColor;
+        } else {
+            pushUndo();
+            item.color = e.target.value;
+        }
         renderAllPageOverlays();
     });
     inspBgToggle.addEventListener('change', (e) => {

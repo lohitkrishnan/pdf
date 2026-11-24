@@ -49,3 +49,14 @@ Then open `http://127.0.0.1:8765/`.
     </li>
 </ul>
 ```
+
+## Third-party files in `vendor/`
+
+| File | Project | License |
+| --- | --- | --- |
+| `qpdf.js`, `qpdf.wasm` | QPDF 12 (WebAssembly build) | Apache-2.0 |
+| `pdf-lib.min.js` | pdf-lib | MIT |
+| `pdf.min.mjs`, `pdf.worker.min.mjs` | PDF.js | Apache-2.0 |
+| `jspdf.umd.min.js` | jsPDF | MIT |
+| `fontkit.umd.min.js` | @pdf-lib/fontkit 1.1.1 (loaded only when a form field needs a Unicode font) | MIT |
+| `fonts/NotoSans-Regular.ttf` | Noto Sans, trimmed to Latin, Greek, Cyrillic, punctuation and currency symbols (used for form fields containing characters like ₹) | SIL Open Font License 1.1, see `fonts/OFL.txt` |
