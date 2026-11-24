@@ -63,7 +63,11 @@ function initApp() {
             const isActive = b.dataset.tab === tab;
             b.classList.toggle('is-active', isActive);
             b.setAttribute('aria-selected', String(isActive));
+            b.tabIndex = isActive ? 0 : -1; // roving tabindex: Tab reaches the active tab only
         });
+        if (tab === 'fill' || tab === 'redact') {
+            edShell.setAttribute('aria-labelledby', `tab-${tab}`);
+        }
 
         secPanel.hidden = tab !== 'security';
         orgPanel.hidden = tab !== 'organizer';
@@ -106,6 +110,22 @@ function initApp() {
         sharedStageRoot: edStageRoot,
         toast,
         switchToTab,
+    });
+
+    // Arrow keys move between tabs (WAI-ARIA tabs pattern, automatic activation).
+    const tabList = Array.from(navBtns);
+    tabList.forEach((btn, i) => {
+        btn.addEventListener('keydown', (e) => {
+            let next = null;
+            if (e.key === 'ArrowRight') next = tabList[(i + 1) % tabList.length];
+            else if (e.key === 'ArrowLeft') next = tabList[(i - 1 + tabList.length) % tabList.length];
+            else if (e.key === 'Home') next = tabList[0];
+            else if (e.key === 'End') next = tabList[tabList.length - 1];
+            if (!next) return;
+            e.preventDefault();
+            switchToTab(next.dataset.tab);
+            next.focus();
+        });
     });
 
     navBtns.forEach((btn) => {

@@ -35,10 +35,15 @@ Then open `http://127.0.0.1:8765/`.
 
 ## Publishing to `lohitkrishnan.com/pdf/`
 
-1. Create a public GitHub repository named **`pdf`** under `github.com/lohitkrishnan/pdf`.
-2. Push this directory to the `main` branch (`git init`, `git add .`, `git commit -m "Initial PDF Studio"`, `git push -u origin main`).
-3. In repository **Settings → Pages**, set **Deploy from a branch** (`main` / `/ (root)`). GitHub Pages will automatically serve it at `https://lohitkrishnan.com/pdf/`.
-4. Link it from `lohitkrishnan.com/index.html` using the same section markup:
+This repo is a GitHub Pages *project site* published from `main` / `/ (root)`. It appears at
+`https://lohitkrishnan.com/pdf/` because the homepage repo is the account's *user site*
+(`lohitkrishnan/lohitkrishnan.github.io`) with the custom domain `lohitkrishnan.com`: GitHub serves every
+project site of the account under that domain. (If the homepage repo is ever renamed away from
+`lohitkrishnan.github.io`, this tool falls back to `https://lohitkrishnan.github.io/pdf/`, which then
+no longer redirects.)
+
+To publish a change, push to `main`; Pages redeploys in a minute or two.
+To link it from the homepage (`lohitkrishnan.com/index.html`), use the same section markup:
 
 ```html
 <h2 class="section-title">Tools</h2>

@@ -16,10 +16,11 @@
     --line-strong: #b5aea2;
     --accent: #e07b00;
     --accent-soft: rgba(224, 123, 0, 0.12);
-    --accent-fg: #ffffff;
-    --ok: #15803d;
+    --accent-fg: #1a1816; /* near-black on orange: 5.9:1 (white was 3.0:1) */
+    --accent-text: #8f4f00; /* orange used as text: >= 4.5:1 on all light surfaces */
+    --ok: #126e34;
     --ok-soft: rgba(21, 128, 61, 0.12);
-    --warn: #b45309;
+    --warn: #9b4708;
     --warn-soft: rgba(180, 83, 9, 0.12);
     --danger: #b91c1c;
     --danger-soft: rgba(185, 28, 28, 0.12);
@@ -34,17 +35,18 @@
     --surface: #262421;
     --card: #2d2a26;
     --text: #e9e5dd;
-    --muted: #9c978e;
+    --muted: #aeaaa2;
     --rule: #36332f;
     --line-strong: #6a665f;
     --accent: #ff9f1a;
     --accent-soft: rgba(255, 159, 26, 0.15);
     --accent-fg: #1a1816;
+    --accent-text: #ff9f1a;
     --ok: #4ade80;
     --ok-soft: rgba(74, 222, 128, 0.15);
     --warn: #fbbf24;
     --warn-soft: rgba(251, 191, 36, 0.14);
-    --danger: #f87171;
+    --danger: #f98888;
     --danger-soft: rgba(248, 113, 113, 0.15);
     --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
@@ -130,7 +132,7 @@ code, kbd {
 }
 
 .back-home:hover {
-    color: var(--accent);
+    color: var(--accent-text);
 }
 
 .brand-title-row {
@@ -745,6 +747,33 @@ code, kbd {
 .page-thumb-card.is-drop-target {
     border-color: var(--accent);
     box-shadow: -4px 0 0 0 var(--accent);
+}
+
+.page-thumb-card.is-drop-target.is-drop-after {
+    box-shadow: 4px 0 0 0 var(--accent);
+}
+
+.thumb-drag-handle {
+    margin-left: auto;
+    margin-right: 0.25rem;
+    padding: 0.15rem 0.35rem;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: grab;
+    touch-action: none;
+}
+
+.thumb-drag-handle:hover,
+.thumb-drag-handle:focus-visible {
+    background: rgba(127, 127, 127, 0.15);
+}
+
+.page-thumb-card.is-dragging .thumb-drag-handle {
+    cursor: grabbing;
 }
 
 .thumb-top-bar {
@@ -1477,6 +1506,11 @@ code, kbd {
     background: var(--surface);
     border: 1px solid var(--rule);
     border-radius: 8px;
+}
+
+.preview-pw-error {
+    color: var(--danger);
+    font-weight: 600;
 }
 
 .toast-container {

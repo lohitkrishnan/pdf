@@ -58,7 +58,19 @@ function deduplicateName(rawName, seen) {
  * @param {Array<{ name: string, data: Uint8Array }>} entries
  * @returns {Uint8Array}
  */
+// This writer produces classic (non-Zip64) archives: at most 65,535 entries and 4 GiB in total.
+const ZIP_MAX_ENTRIES = 0xffff;
+const ZIP_MAX_BYTES = 0xffffffff;
+
 export function createZip(entries) {
+    if (entries.length > ZIP_MAX_ENTRIES) {
+        throw new Error(`Too many files for one .zip (${entries.length}; the limit is ${ZIP_MAX_ENTRIES}). Split into larger chunks.`);
+    }
+    const totalBytes = entries.reduce((sum, e) => sum + (e.data?.byteLength || 0), 0);
+    // Rough bound including headers; keeps every offset within 32 bits.
+    if (totalBytes + entries.length * 1024 > ZIP_MAX_BYTES) {
+        throw new Error('These files are too large to put in one .zip (4 GiB limit).');
+    }
     const encoder = new TextEncoder();
     const { dosTime, dosDate } = dosTimeDate();
     const seenNames = new Set();

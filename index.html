@@ -9,6 +9,14 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23faf8f3'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-size='16' font-weight='700' fill='%23e07b00'%3EP%3C/text%3E%3C/svg%3E" />
     <link rel="preload" href="./fonts/Lora-Variable.woff" as="font" type="font/woff" crossorigin />
     <link rel="stylesheet" href="./css/app.css" />
+    <link rel="canonical" href="https://lohitkrishnan.com/pdf/" />
+    <meta property="og:title" content="PDF Studio — Lohit Krishnan" />
+    <meta property="og:description" content="Lock, unlock, compress, merge, split, fill, sign, edit and redact PDFs entirely in your browser. Files never leave your device." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://lohitkrishnan.com/pdf/" />
+    <meta property="og:site_name" content="Lohit Krishnan" />
+    <!-- Page-view counter shared with lohitkrishnan.com. It records visits only; PDFs are never sent anywhere. -->
+    <script data-goatcounter="https://lohitkrishnan.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </head>
 <body>
     <header class="app-header">
@@ -29,16 +37,16 @@
         </div>
 
         <nav class="workspace-tabs" role="tablist" aria-label="PDF Studio Workspaces">
-            <button type="button" role="tab" class="ws-tab js-nav-tab is-active" data-tab="security" aria-selected="true">
+            <button type="button" role="tab" id="tab-security" class="ws-tab js-nav-tab is-active" data-tab="security" aria-selected="true" aria-controls="ws-security" tabindex="0">
                 <span class="tab-num">1</span> Lock, Unlock &amp; Compress
             </button>
-            <button type="button" role="tab" class="ws-tab js-nav-tab" data-tab="organizer" aria-selected="false">
+            <button type="button" role="tab" id="tab-organizer" class="ws-tab js-nav-tab" data-tab="organizer" aria-selected="false" aria-controls="ws-organizer" tabindex="-1">
                 <span class="tab-num">2</span> Merge, Split &amp; Pages
             </button>
-            <button type="button" role="tab" class="ws-tab js-nav-tab" data-tab="fill" aria-selected="false">
+            <button type="button" role="tab" id="tab-fill" class="ws-tab js-nav-tab" data-tab="fill" aria-selected="false" aria-controls="ws-editor-shell" tabindex="-1">
                 <span class="tab-num">3</span> Fill Forms &amp; Sign
             </button>
-            <button type="button" role="tab" class="ws-tab js-nav-tab" data-tab="redact" aria-selected="false">
+            <button type="button" role="tab" id="tab-redact" class="ws-tab js-nav-tab" data-tab="redact" aria-selected="false" aria-controls="ws-editor-shell" tabindex="-1">
                 <span class="tab-num">4</span> Edit Text, Overlay &amp; Redact
             </button>
         </nav>
@@ -46,7 +54,7 @@
 
     <main class="app-main">
         <!-- WORKSPACE 1: Lock, Unlock & Compress -->
-        <section id="ws-security" class="workspace-panel" aria-label="Lock, Unlock and Compress PDF">
+        <section id="ws-security" class="workspace-panel" role="tabpanel" aria-labelledby="tab-security">
             <div class="ws-grid-2col">
                 <div class="ws-main-col">
                     <div class="panel-card">
@@ -61,7 +69,7 @@
                             </div>
                         </div>
 
-                        <div id="sec-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop or select PDF files">
+                        <div id="sec-dropzone" class="dropzone" tabindex="0" role="button">
                             <input type="file" id="sec-file-input" accept=".pdf,application/pdf" multiple hidden />
                             <div class="dropzone-prompt">
                                 <strong>Drop PDF files here</strong> or click to browse (supports batch processing)
@@ -212,7 +220,7 @@
         </section>
 
         <!-- WORKSPACE 2: Merge, Split & Visual Page Organizer -->
-        <section id="ws-organizer" class="workspace-panel" hidden aria-label="Merge, Split and Page Organizer">
+        <section id="ws-organizer" class="workspace-panel" role="tabpanel" aria-labelledby="tab-organizer" hidden>
             <div class="ws-grid-2col">
                 <div class="ws-main-col">
                     <div class="panel-card">
@@ -227,7 +235,7 @@
                             </div>
                         </div>
 
-                        <div id="org-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop PDFs or images to organize">
+                        <div id="org-dropzone" class="dropzone" tabindex="0" role="button">
                             <input type="file" id="org-file-input" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" multiple hidden />
                             <div class="dropzone-prompt">
                                 <strong>Drop PDFs or Images here</strong> to append pages into the grid
@@ -295,7 +303,7 @@
         </section>
 
         <!-- WORKSPACE 3 & 4 SHARED SHELL -->
-        <section id="ws-editor-shell" class="workspace-panel" hidden aria-label="Fill, Sign, Edit Text and Redact PDF">
+        <section id="ws-editor-shell" class="workspace-panel" role="tabpanel" aria-labelledby="tab-fill" hidden>
             <div class="ed-shell-layout">
                 <!-- WORKSPACE 3 SIDEBAR: Fill Forms & Sign -->
                 <aside id="ws-fill-sidebar" class="ed-sidebar panel-card">
@@ -343,7 +351,7 @@
                         </div>
 
                         <div id="ed3-sig-type-pane" class="sig-pane" hidden>
-                            <input type="text" id="ed3-sig-type-input" class="input input-sm" value="" placeholder="Type full name or stamp" autocomplete="name" />
+                            <input type="text" id="ed3-sig-type-input" class="input input-sm" value="" placeholder="Type full name or stamp" autocomplete="name" / aria-label="Name or stamp text for typed signature">
                             <div class="radio-row-compact">
                                 <label><input type="radio" name="ed3-sig-style" value="cursive" checked /> Cursive</label>
                                 <label><input type="radio" name="ed3-sig-style" value="serif" /> Executive Serif</label>
@@ -408,19 +416,19 @@
                             <button type="button" id="ed4-insp-delete" class="btn btn-ghost btn-xs">Delete</button>
                         </div>
                         <div id="ed4-insp-text-controls" class="form-stack-sm">
-                            <textarea id="ed4-insp-text" class="input input-sm" rows="2" placeholder="Text content"></textarea>
+                            <textarea id="ed4-insp-text" class="input input-sm" rows="2" placeholder="Text content" aria-label="Overlay text"></textarea>
                             <div class="insp-row">
-                                <select id="ed4-insp-font" class="input input-xs">
+                                <select id="ed4-insp-font" class="input input-xs" aria-label="Font">
                                     <option value="Helvetica">Sans (Helvetica)</option>
                                     <option value="TimesRoman">Serif (Times)</option>
                                     <option value="Courier">Mono (Courier)</option>
                                 </select>
-                                <input type="number" id="ed4-insp-size" class="input input-xs insp-size" min="8" max="64" value="12" title="Font size (pt)" />
+                                <input type="number" id="ed4-insp-size" class="input input-xs insp-size" min="8" max="64" value="12" title="Font size (pt)" / aria-label="Font size in points">
                                 <button type="button" id="ed4-insp-bold" class="btn btn-ghost btn-xs" title="Bold"><strong>B</strong></button>
                                 <button type="button" id="ed4-insp-italic" class="btn btn-ghost btn-xs" title="Italic"><em>I</em></button>
                             </div>
                             <div class="insp-row">
-                                <select id="ed4-insp-color" class="input input-xs">
+                                <select id="ed4-insp-color" class="input input-xs" aria-label="Text colour">
                                     <option value="#1c1a17">Black</option>
                                     <option value="#1d4ed8">Blue</option>
                                     <option value="#b91c1c">Red</option>

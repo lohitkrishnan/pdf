@@ -201,7 +201,110 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         renderGrid();
     }
 
+    // Drop on the left half of a card inserts before it; the right half inserts after it.
+    function dropIsAfter(card, clientX) {
+        const r = card.getBoundingClientRect();
+        return clientX > r.left + r.width / 2;
+    }
+
+    function markDropTarget(card, clientX) {
+        const after = dropIsAfter(card, clientX);
+        if (!card.classList.contains('is-drop-target') || card.classList.contains('is-drop-after') !== after) {
+            clearDropMarkers();
+            card.classList.add('is-drop-target');
+            card.classList.toggle('is-drop-after', after);
+        }
+    }
+
+    function clearDropMarkers() {
+        grid.querySelectorAll('.is-drop-target').forEach((el) => el.classList.remove('is-drop-target', 'is-drop-after'));
+    }
+
+    function movePage(from, target, after) {
+        let insertAt = target + (after ? 1 : 0);
+        if (from < insertAt) insertAt -= 1;
+        if (insertAt === from) return;
+        const [moved] = state.pages.splice(from, 1);
+        state.pages.splice(insertAt, 0, moved);
+    }
+
+    // Pointer-based reorder from the drag handle. HTML5 drag-and-drop doesn't fire on touch
+    // screens, so this is what makes reordering work on phones and tablets.
+    function startPointerReorder(e, fromIndex, card) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        const handle = e.currentTarget;
+        handle.setPointerCapture(e.pointerId);
+        card.classList.add('is-dragging');
+        let target = null;
+        let after = false;
+        let scrollTimer = null;
+
+        const onMove = (ev) => {
+            const el = document.elementFromPoint(ev.clientX, ev.clientY);
+            const over = el ? el.closest('.page-thumb-card') : null;
+            if (over && over !== card && grid.contains(over)) {
+                target = over;
+                after = dropIsAfter(over, ev.clientX);
+                markDropTarget(over, ev.clientX);
+            } else if (!over) {
+                target = null;
+                clearDropMarkers();
+            }
+            // Auto-scroll near the top/bottom of the viewport so long documents can be reordered.
+            clearInterval(scrollTimer);
+            const edge = 60;
+            const dy = ev.clientY < edge ? -12 : ev.clientY > window.innerHeight - edge ? 12 : 0;
+            if (dy) scrollTimer = setInterval(() => window.scrollBy(0, dy), 16);
+        };
+        const finish = (commit) => {
+            clearInterval(scrollTimer);
+            handle.removeEventListener('pointermove', onMove);
+            handle.removeEventListener('pointerup', onUp);
+            handle.removeEventListener('pointercancel', onCancel);
+            card.classList.remove('is-dragging');
+            clearDropMarkers();
+            if (commit && target) {
+                movePage(fromIndex, Number(target.dataset.index), after);
+                renderGrid();
+            }
+        };
+        const onUp = () => finish(true);
+        const onCancel = () => finish(false);
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onCancel);
+    }
+
+    // Click toggles one page; Shift+click applies the same state to the whole range since the last click.
+    let lastSelectIndex = null;
+    function setSelection(index, selected, extendRange) {
+        if (extendRange && lastSelectIndex !== null && lastSelectIndex < state.pages.length) {
+            const [a, b] = [Math.min(lastSelectIndex, index), Math.max(lastSelectIndex, index)];
+            for (let i = a; i <= b; i++) state.pages[i].selected = selected;
+        } else {
+            state.pages[index].selected = selected;
+        }
+        lastSelectIndex = index;
+        grid.querySelectorAll('.page-thumb-card').forEach((c, i) => {
+            const on = Boolean(state.pages[i]?.selected);
+            c.classList.toggle('is-selected', on);
+            const cb = c.querySelector('.js-select');
+            if (cb) cb.checked = on;
+        });
+        updateControls();
+    }
+
+    // Free the bytes of source documents that no longer have any pages in the grid.
+    function pruneUnusedDocs() {
+        const used = new Set(state.pages.map((p) => p.docId));
+        for (const docId of [...state.docs.keys()]) {
+            if (!used.has(docId)) state.docs.delete(docId);
+        }
+    }
+
     function renderGrid() {
+        pruneUnusedDocs();
         grid.innerHTML = '';
 
         state.pages.forEach((item, index) => {
@@ -216,6 +319,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
                         <input type="checkbox" class="js-select" ${item.selected ? 'checked' : ''} />
                         <span class="thumb-num">#${index + 1}</span>
                     </label>
+                    <button type="button" class="thumb-drag-handle js-drag-handle" title="Drag to reorder" aria-label="Drag page ${index + 1} to reorder">⠿</button>
                     ${item.rotationDelta ? `<span class="badge badge-neutral">${item.rotationDelta}°</span>` : ''}
                 </div>
                 <div class="thumb-img-wrap">
@@ -231,17 +335,13 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
                 </div>
             `;
 
-            card.querySelector('.js-select').addEventListener('change', (e) => {
-                item.selected = e.target.checked;
-                card.classList.toggle('is-selected', item.selected);
-                updateControls();
+            const selectBox = card.querySelector('.js-select');
+            selectBox.addEventListener('click', (e) => {
+                setSelection(index, selectBox.checked, e.shiftKey);
             });
 
-            card.querySelector('.thumb-img-wrap').addEventListener('click', () => {
-                item.selected = !item.selected;
-                card.classList.toggle('is-selected', item.selected);
-                card.querySelector('.js-select').checked = item.selected;
-                updateControls();
+            card.querySelector('.thumb-img-wrap').addEventListener('click', (e) => {
+                setSelection(index, !item.selected, e.shiftKey);
             });
 
             card.querySelector('.js-rotate').addEventListener('click', async () => {
@@ -261,7 +361,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
                 renderGrid();
             });
 
-            // Drag & drop reorder
+            // Drag & drop reorder (mouse: HTML5 drag; touch/pen/mouse: the ⠿ handle)
             card.addEventListener('dragstart', (e) => {
                 state.draggedIndex = index;
                 card.classList.add('is-dragging');
@@ -271,26 +371,29 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             card.addEventListener('dragend', () => {
                 state.draggedIndex = null;
                 card.classList.remove('is-dragging');
-                grid.querySelectorAll('.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
+                clearDropMarkers();
             });
             card.addEventListener('dragover', (e) => {
                 if (state.draggedIndex === null || state.draggedIndex === index) return;
                 e.preventDefault();
-                card.classList.add('is-drop-target');
+                markDropTarget(card, e.clientX);
             });
             card.addEventListener('dragleave', () => {
-                card.classList.remove('is-drop-target');
+                card.classList.remove('is-drop-target', 'is-drop-after');
             });
             card.addEventListener('drop', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                card.classList.remove('is-drop-target');
+                const after = dropIsAfter(card, e.clientX);
+                clearDropMarkers();
                 if (state.draggedIndex === null || state.draggedIndex === index) return;
-                const [moved] = state.pages.splice(state.draggedIndex, 1);
-                state.pages.splice(index, 0, moved);
+                movePage(state.draggedIndex, index, after);
                 state.draggedIndex = null;
                 renderGrid();
             });
+
+            const handle = card.querySelector('.js-drag-handle');
+            handle.addEventListener('pointerdown', (e) => startPointerReorder(e, index, card));
 
             grid.appendChild(card);
         });

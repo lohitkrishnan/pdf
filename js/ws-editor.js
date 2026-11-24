@@ -553,6 +553,54 @@ export function initEditorWorkspaces({
 
     // ---------- Multi-Page Stage Rendering ----------
 
+    // ---------- Lazy page bitmaps ----------
+    // Every page is rendered once while loading (text extraction needs its fonts), but for longer
+    // documents only pages near the viewport keep their high-DPI bitmap; the rest are released and
+    // re-rendered when scrolled back into range. This caps memory on 100+ page PDFs.
+    const LAZY_PAGE_THRESHOLD = 6;
+    const LAZY_MARGIN_PX = 1500;
+    let stageObserver = null;
+
+    function releasePageCanvas(meta) {
+        if (!meta.rendered || meta.renderPromise) return;
+        meta.canvas.width = 1;
+        meta.canvas.height = 1;
+        meta.rendered = false;
+    }
+
+    function ensurePageCanvas(meta) {
+        if (meta.rendered) return Promise.resolve();
+        if (meta.renderPromise) return meta.renderPromise;
+        const seq = renderSeq;
+        meta.renderPromise = (async () => {
+            const page = await state.pdfJsDoc.getPage(meta.pageIndex + 1);
+            if (seq !== renderSeq) return;
+            const { canvas, cssVp, dpr } = meta;
+            canvas.width = Math.max(1, Math.round(cssVp.width * dpr));
+            canvas.height = Math.max(1, Math.round(cssVp.height * dpr));
+            const ctx = canvas.getContext('2d', { alpha: false });
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({
+                canvasContext: ctx,
+                viewport: cssVp,
+                transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+                annotationMode: meta.annotationMode,
+            }).promise;
+            meta.rendered = true;
+        })().finally(() => {
+            meta.renderPromise = null;
+        });
+        return meta.renderPromise;
+    }
+
+    // Measured against the browser viewport: depending on layout either the window or the stage
+    // scrolls, and element rects are in viewport coordinates either way.
+    function isNearStageViewport(el) {
+        const r = el.getBoundingClientRect();
+        return r.bottom > -LAZY_MARGIN_PX && r.top < window.innerHeight + LAZY_MARGIN_PX;
+    }
+
     async function renderStagePages() {
         if (!state.pdfJsDoc) return;
         const seq = ++renderSeq;
@@ -561,6 +609,18 @@ export function initEditorWorkspaces({
         zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
 
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const lazy = state.pdfJsDoc.numPages > LAZY_PAGE_THRESHOLD;
+        if (stageObserver) stageObserver.disconnect();
+        stageObserver = lazy && 'IntersectionObserver' in window
+            ? new IntersectionObserver((entries) => {
+                for (const entry of entries) {
+                    const meta = state.pagesMeta[Number(entry.target.dataset.pageIndex)];
+                    if (!meta) continue;
+                    if (entry.isIntersecting) ensurePageCanvas(meta);
+                    else releasePageCanvas(meta);
+                }
+            }, { root: null, rootMargin: `${LAZY_MARGIN_PX}px 0px` })
+            : null;
 
         for (let i = 0; i < state.pdfJsDoc.numPages; i++) {
             if (seq !== renderSeq) return;
@@ -621,11 +681,12 @@ export function initEditorWorkspaces({
             const canHideWidgets = editableWidgets.length > 0
                 && editableWidgets.every((a) => a.fieldName && overlayFieldNames.has(a.fieldName));
 
+            const annotationMode = canHideWidgets ? pdfjsLib.AnnotationMode.ENABLE_FORMS : pdfjsLib.AnnotationMode.ENABLE;
             await page.render({
                 canvasContext: ctx,
                 viewport: cssVp,
                 transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
-                annotationMode: canHideWidgets ? pdfjsLib.AnnotationMode.ENABLE_FORMS : pdfjsLib.AnnotationMode.ENABLE,
+                annotationMode,
             }).promise;
 
             const textContent = await page.getTextContent();
@@ -656,6 +717,10 @@ export function initEditorWorkspaces({
                 cssVp,
                 rotate: page.rotate || 0,
                 canvas,
+                dpr,
+                annotationMode,
+                rendered: true,
+                renderPromise: null,
                 textSpans,
                 wrapperEl: wrapper,
                 widgetLayerEl: widgetLayer,
@@ -668,6 +733,11 @@ export function initEditorWorkspaces({
             renderPageWidgets(meta);
             renderPageTextLayer(meta);
             renderPageOverlays(meta);
+
+            if (lazy) {
+                if (!isNearStageViewport(wrapper)) releasePageCanvas(meta);
+                stageObserver?.observe(wrapper);
+            }
         }
 
         updateToolModeUI();
@@ -928,6 +998,11 @@ export function initEditorWorkspaces({
     }
 
     function createOrFocusTextEditFromSpans(meta, spans) {
+        // The ink colour is sampled from the page bitmap, so make sure it is drawn first.
+        if (!meta.rendered) {
+            ensurePageCanvas(meta).then(() => createOrFocusTextEditFromSpans(meta, spans));
+            return;
+        }
         if (!spans || spans.length === 0) return;
 
         // Union bounding box in normalized coordinates
@@ -2194,7 +2269,9 @@ export function initEditorWorkspaces({
             'text-edit': 'Click any highlighted text span (or drag across words) to edit PDF text inline',
             text: 'Click anywhere on a page to place a freeform text box',
             whiteout: 'Click & drag on a page to cover unwanted regions with whiteout',
-            redaction: 'Click & drag to mark Confidential Redactions (200 DPI burn-in ON)',
+            redaction: state.burnInRedactions
+                ? 'Click & drag to mark Confidential Redactions (200 DPI burn-in ON)'
+                : 'Click & drag to mark redaction boxes (burn-in OFF: text under the boxes stays in the file)',
         };
         toolStatusPill.textContent = descriptions[state.tool] || '';
     }
@@ -2262,7 +2339,13 @@ export function initEditorWorkspaces({
     });
 
     flattenCb.addEventListener('change', (e) => { state.flattenFields = e.target.checked; });
-    burnInCb.addEventListener('change', (e) => { state.burnInRedactions = e.target.checked; });
+    burnInCb.addEventListener('change', (e) => {
+        state.burnInRedactions = e.target.checked;
+        updateToolModeUI();
+        if (!state.burnInRedactions) {
+            toast('Burn-in is off: black boxes will only cover text. The text underneath stays in the PDF and can still be selected, copied or extracted.', 'warn');
+        }
+    });
 
     // Signature studio events
     sigTabBtns.forEach((btn) => {

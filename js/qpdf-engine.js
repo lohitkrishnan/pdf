@@ -80,6 +80,14 @@ async function runQpdf(args, inputBytes = null, readOutputPath = null) {
     };
 }
 
+function randomOwnerPassword() {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    let s = '';
+    for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s).replace(/[+/=]/g, (c) => ({ '+': 'A', '/': 'B', '=': '' }[c]));
+}
+
 // PDF readers accept the %PDF- header anywhere in the first 1024 bytes.
 function hasPdfHeader(bytes) {
     const n = Math.min(bytes.byteLength, 1024);
@@ -327,7 +335,11 @@ export async function lockPdf(
         workingPw = '';
     }
 
-    const effectiveOwner = ownerPassword || userPassword;
+    // With no owner password, QPDF would reuse the open password, and anyone who can open the
+    // file could also lift its restrictions in a desktop editor. When restrictions are set, use a
+    // random owner password instead so they actually hold.
+    const restricted = print !== 'full' || modify !== 'all' || extract !== 'y';
+    const effectiveOwner = ownerPassword || (restricted ? randomOwnerPassword() : userPassword);
     const args = [];
 
     if (workingPw) {

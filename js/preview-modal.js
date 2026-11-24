@@ -82,46 +82,91 @@ function ensureModalDom() {
     return modalEl;
 }
 
+let previewObserver = null;
+const PREVIEW_MARGIN_PX = 1200;
+
+// Pages are laid out at their final size up front, but only pages near the visible area get a
+// bitmap; bitmaps far off-screen are released. Every await re-checks renderSeq so a zoom change
+// or close mid-render can't append stale pages.
 async function renderPreviewPages() {
     if (!modalEl || !currentPdf) return;
     const seq = ++renderSeq;
+    const pdf = currentPdf;
     const body = modalEl.querySelector('#preview-modal-body');
     const zoomLabel = modalEl.querySelector('#preview-zoom-label');
     zoomLabel.textContent = `${Math.round(currentZoom * 100)}%`;
 
-    body.innerHTML = '';
+    if (previewObserver) previewObserver.disconnect();
+    body.replaceChildren();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const zoom = currentZoom;
+    const slots = [];
 
-    for (let i = 1; i <= currentPdf.numPages; i++) {
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
         if (seq !== renderSeq) return;
-        const page = await currentPdf.getPage(i);
-        const vp = page.getViewport({ scale: currentZoom });
+        const vp = page.getViewport({ scale: zoom });
 
         const wrap = document.createElement('div');
         wrap.className = 'preview-page-card';
+        wrap.dataset.page = String(i);
 
         const label = document.createElement('div');
         label.className = 'preview-page-num';
-        label.textContent = `Page ${i} of ${currentPdf.numPages}`;
+        label.textContent = `Page ${i} of ${pdf.numPages}`;
 
         const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(vp.width * dpr));
-        canvas.height = Math.max(1, Math.round(vp.height * dpr));
+        canvas.width = 1;
+        canvas.height = 1;
         canvas.style.width = `${vp.width}px`;
         canvas.style.height = `${vp.height}px`;
+        canvas.style.background = '#ffffff';
 
         wrap.append(label, canvas);
         body.appendChild(wrap);
+        slots.push({ page, vp, canvas, rendered: false, rendering: null });
+    }
 
-        const ctx = canvas.getContext('2d', { alpha: false });
+    const drawSlot = (slot) => {
+        if (slot.rendered || slot.rendering) return slot.rendering;
+        slot.canvas.width = Math.max(1, Math.round(slot.vp.width * dpr));
+        slot.canvas.height = Math.max(1, Math.round(slot.vp.height * dpr));
+        const ctx = slot.canvas.getContext('2d', { alpha: false });
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        await page.render({
+        ctx.fillRect(0, 0, slot.canvas.width, slot.canvas.height);
+        slot.rendering = slot.page.render({
             canvasContext: ctx,
-            viewport: vp,
+            viewport: slot.vp,
             transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
-        }).promise;
+        }).promise
+            .then(() => { if (seq === renderSeq) slot.rendered = true; })
+            .catch(() => {})
+            .finally(() => { slot.rendering = null; });
+        return slot.rendering;
+    };
+    const releaseSlot = (slot) => {
+        if (!slot.rendered || slot.rendering) return;
+        slot.canvas.width = 1;
+        slot.canvas.height = 1;
+        slot.rendered = false;
+    };
+
+    if ('IntersectionObserver' in window) {
+        previewObserver = new IntersectionObserver((entries) => {
+            if (seq !== renderSeq) return;
+            for (const entry of entries) {
+                const slot = slots[Number(entry.target.dataset.page) - 1];
+                if (!slot) continue;
+                if (entry.isIntersecting) drawSlot(slot);
+                else releaseSlot(slot);
+            }
+        }, { root: body, rootMargin: `${PREVIEW_MARGIN_PX}px 0px` });
+        body.querySelectorAll('.preview-page-card').forEach((el) => previewObserver.observe(el));
+    } else {
+        for (const slot of slots) {
+            if (seq !== renderSeq) return;
+            await drawSlot(slot);
+        }
     }
 }
 
@@ -172,9 +217,11 @@ export async function openPreviewModal({ bytes, filename = 'document.pdf', passw
         await renderPreviewPages();
     } catch (err) {
         if (err && err.name === 'PasswordException') {
+            const wrongPassword = err.code === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD;
             body.innerHTML = `
                 <div class="preview-password-box">
                     <p>This PDF requires a User (open) password to preview.</p>
+                    ${wrongPassword ? '<p class="preview-pw-error" role="alert">That password didn’t work. Try again.</p>' : ''}
                     <form id="preview-pw-form" class="inline-form">
                         <input type="password" id="preview-pw-input" class="input" placeholder="Enter open password" required />
                         <button type="submit" class="btn btn-primary btn-sm">Unlock Preview</button>
@@ -200,6 +247,13 @@ export async function closePreviewModal() {
     renderSeq += 1;
     modalEl.hidden = true;
     document.body.classList.remove('modal-open');
+    if (previewObserver) {
+        previewObserver.disconnect();
+        previewObserver = null;
+    }
+    modalEl.querySelector('#preview-modal-body')?.replaceChildren();
+    // Don't keep the last previewed PDF in memory after the modal is closed.
+    currentBytes = null;
     if (currentPdf) {
         try {
             await currentPdf.destroy();

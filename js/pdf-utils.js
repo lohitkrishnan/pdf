@@ -28,11 +28,9 @@ export function formatDeltaPct(originalSize, newSize) {
 
 export function applySuffix(filename, suffix) {
     const clean = filename || 'document.pdf';
-    if (!suffix) return clean.toLowerCase().endsWith('.pdf') ? clean : `${clean}.pdf`;
-    const dot = clean.lastIndexOf('.');
-    const base = dot > 0 ? clean.slice(0, dot) : clean;
-    const ext = dot > 0 && clean.slice(dot).toLowerCase() === '.pdf' ? '.pdf' : '.pdf';
-    return `${base}${suffix}${ext}`;
+    // Only a trailing ".pdf" is treated as the extension; other dots ("report.v2") are part of the name.
+    const base = clean.toLowerCase().endsWith('.pdf') ? clean.slice(0, -4) : clean;
+    return `${base || 'document'}${suffix || ''}.pdf`;
 }
 
 export function stripPdfExtension(filename) {

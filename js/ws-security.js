@@ -339,6 +339,10 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
                         compression: state.lockOpts.compression,
                     });
                     outPassword = state.lockOpts.userPassword || '';
+                    const o = state.lockOpts;
+                    if (!o.ownerPassword && (o.print !== 'full' || o.modify !== 'all' || o.extract !== 'y')) {
+                        note = 'Restrictions are protected by a random owner password. Set your own Owner password if you may need to change them later.';
+                    }
                 }
 
                 item.outputBytes = outBytes;
