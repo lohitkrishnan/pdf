@@ -80,6 +80,17 @@ async function runQpdf(args, inputBytes = null, readOutputPath = null) {
     };
 }
 
+// PDF readers accept the %PDF- header anywhere in the first 1024 bytes.
+function hasPdfHeader(bytes) {
+    const n = Math.min(bytes.byteLength, 1024);
+    for (let i = 0; i + 4 < n; i++) {
+        if (bytes[i] === 0x25 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x44 && bytes[i + 3] === 0x46 && bytes[i + 4] === 0x2d) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function cleanQpdfError(text) {
     const first = String(text || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
     // QPDF prefixes messages with the program name and the virtual input path.
@@ -125,18 +136,26 @@ export async function inspectPdf(bytes, password = '') {
     let details = '';
     let unlockedWithPassword = '';
 
-    if (/File is not encrypted/i.test(baseProbe.stdout)) {
+    if (!hasPdfHeader(data)) {
+        encryptionState = 'invalid';
+        details = data.byteLength === 0 ? 'File is empty' : 'Not a PDF file';
+    } else if (/File is not encrypted/i.test(baseProbe.stdout)) {
         encryptionState = 'unencrypted';
         details = 'No password or permission restrictions';
     } else if (baseProbe.exitCode === 0 || baseProbe.exitCode === 3) {
         encryptionState = 'permissions_locked';
         details = parseEncryptionDetails(baseProbe.stdout) || 'Owner permissions set (opens without password)';
-    } else {
+    } else if (/invalid password/i.test(baseProbe.stderr)) {
         encryptionState = 'password_required';
         details = 'User open password required';
+    } else {
+        // QPDF could not open the file for a reason other than a password: it is damaged.
+        encryptionState = 'invalid';
+        const reason = cleanQpdfError(baseProbe.stderr);
+        details = reason ? `Damaged PDF (${reason})` : 'PDF is damaged and could not be read';
     }
 
-    let canReadPages = encryptionState !== 'password_required';
+    let canReadPages = encryptionState === 'unencrypted' || encryptionState === 'permissions_locked';
     let effectivePassword = '';
 
     if (encryptionState === 'password_required' && password) {
@@ -170,7 +189,7 @@ export async function inspectPdf(bytes, password = '') {
         version,
         pageCount,
         size: data.byteLength,
-        encryptionState, // 'unencrypted' | 'permissions_locked' | 'password_required'
+        encryptionState, // 'unencrypted' | 'permissions_locked' | 'password_required' | 'invalid'
         details,
         unlockedWithPassword,
     };
@@ -325,7 +344,13 @@ export async function lockPdf(
         );
     }
 
-    args.push('--encrypt', userPassword, effectiveOwner, cipher === '128' ? '128' : '256');
+    // Use the named forms: positional passwords starting with "-" are parsed as options by QPDF.
+    args.push(
+        '--encrypt',
+        `--user-password=${userPassword}`,
+        `--owner-password=${effectiveOwner}`,
+        `--bits=${cipher === '128' ? '128' : '256'}`
+    );
     if (cipher === '128') {
         args.push('--use-aes=y');
     }
@@ -354,6 +379,12 @@ export async function ensureUnlocked(bytes, password = '') {
 
     if (info.encryptionState === 'unencrypted') {
         return data;
+    }
+
+    if (info.encryptionState === 'invalid') {
+        const err = new Error(`Can't open this file: ${info.details}.`);
+        err.code = 'INVALID_PDF';
+        throw err;
     }
 
     if (info.encryptionState === 'password_required' && !info.unlockedWithPassword) {

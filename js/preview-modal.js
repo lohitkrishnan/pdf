@@ -187,7 +187,10 @@ export async function openPreviewModal({ bytes, filename = 'document.pdf', passw
                 openPreviewModal({ bytes: currentBytes, filename: currentFilename, password: entered });
             });
         } else {
-            body.innerHTML = `<div class="preview-error">Unable to preview PDF: ${err?.message || 'Unknown error'}</div>`;
+            const errorEl = document.createElement('div');
+            errorEl.className = 'preview-error';
+            errorEl.textContent = `Unable to preview PDF: ${err?.message || 'Unknown error'}`;
+            body.replaceChildren(errorEl);
         }
     }
 }

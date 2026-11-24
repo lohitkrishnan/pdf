@@ -98,6 +98,9 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
                 ? '<span class="badge badge-ok">Password Verified</span>'
                 : '<span class="badge badge-danger">Password Required</span>';
         }
+        if (info.encryptionState === 'invalid') {
+            return '<span class="badge badge-danger">Unreadable</span>';
+        }
         if (info.encryptionState === 'permissions_locked') {
             return '<span class="badge badge-warn">Permissions Locked (No open password)</span>';
         }
@@ -294,8 +297,20 @@ export function initSecurityWorkspace({ root, toast, handoffToOrganizer, handoff
         let failCount = 0;
 
         for (const item of state.items) {
-            item.status = 'processing';
+            // Clear the previous run's result so a failed re-run can't leave a stale download behind.
+            item.outputBytes = null;
+            item.outputName = '';
+            item.outputPassword = '';
+            item.note = '';
             item.error = '';
+            if (item.info?.encryptionState === 'invalid') {
+                item.status = 'error';
+                item.error = `Skipped: ${item.info.details}.`;
+                failCount += 1;
+                renderQueue();
+                continue;
+            }
+            item.status = 'processing';
             renderQueue();
 
             const effectivePw = item.passwordOverride || state.masterPassword || '';

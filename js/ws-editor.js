@@ -1772,52 +1772,124 @@ export function initEditorWorkspaces({
 
         // Step C: Burn-In Sanitization on redacted pages at 200 DPI JPEG (non-redacted pages remain 100% vector!)
         if (state.burnInRedactions && redactionPages.size > 0) {
-            const tmpJsPdf = await pdfjsLib.getDocument({ data: compiledBytes.slice(0) }).promise;
-            const cleanDoc = await PDFDocument.load(compiledBytes);
-
-            try {
-                const sortedPages = Array.from(redactionPages).sort((a, b) => a - b);
-                for (const pageIdx of sortedPages) {
-                    const jsPage = await tmpJsPdf.getPage(pageIdx + 1);
-                    const baseVp = jsPage.getViewport({ scale: 1 });
-                    const renderVp = jsPage.getViewport({ scale: 200 / 72 });
-
-                    const canvas = document.createElement('canvas');
-                    canvas.width = Math.max(1, Math.round(renderVp.width));
-                    canvas.height = Math.max(1, Math.round(renderVp.height));
-                    const ctx = canvas.getContext('2d', { alpha: false });
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                    await jsPage.render({ canvasContext: ctx, viewport: renderVp }).promise;
-                    const jpgBytes = dataUrlToUint8Array(canvas.toDataURL('image/jpeg', 0.90));
-                    const jpgEmbed = await cleanDoc.embedJpg(jpgBytes);
-
-                    cleanDoc.removePage(pageIdx);
-                    const newPage = cleanDoc.insertPage(pageIdx, [baseVp.width, baseVp.height]);
-                    newPage.drawImage(jpgEmbed, {
-                        x: 0,
-                        y: 0,
-                        width: baseVp.width,
-                        height: baseVp.height,
-                    });
-                }
-
-                // Scrub metadata when sanitizing confidential redactions
-                cleanDoc.setTitle('');
-                cleanDoc.setAuthor('');
-                cleanDoc.setSubject('');
-                cleanDoc.setKeywords([]);
-                cleanDoc.setProducer('');
-                cleanDoc.setCreator('');
-            } finally {
-                await tmpJsPdf.destroy();
-            }
-
-            compiledBytes = new Uint8Array(await cleanDoc.save());
+            compiledBytes = await burnInRedactedPages(compiledBytes, redactionPages);
         }
 
         return compiledBytes;
+    }
+
+    /**
+     * Produce a sanitized copy of `bytes` in which every page in `redactionPages` exists only
+     * as a flat 200 DPI image. Nothing from the original redacted pages may survive in the file:
+     *
+     *  - pdf-lib's removePage()/save() keeps unreferenced objects, so the old content streams
+     *    would still be inside the file. Instead, all pages are copied into a brand-new document;
+     *    the copier only brings across objects that are still reachable.
+     *  - Before copying, each redacted page is stripped in place (no contents, resources,
+     *    annotations or inherited attributes), so links or annotations on other pages that point
+     *    at it cannot drag its old content back in.
+     *  - Form fields are flattened first: a field's dictionary links all of its widgets, so a field
+     *    shared with a redacted page could otherwise carry that page's values across.
+     *  - The new document has no Info dictionary, XMP metadata, outlines, named destinations,
+     *    attachments or JavaScript, since none of those are copied from the catalog.
+     */
+    async function burnInRedactedPages(bytes, redactionPages) {
+        const { PDFDocument, PDFName, PDFDict, PDFArray } = window.PDFLib;
+        const redacted = Array.from(redactionPages).sort((a, b) => a - b);
+
+        // 1. Rasterize the redacted pages exactly as they look in the compiled file.
+        const rasters = new Map();
+        const jsDoc = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+        try {
+            for (const pageIdx of redacted) {
+                const jsPage = await jsDoc.getPage(pageIdx + 1);
+                const baseVp = jsPage.getViewport({ scale: 1 });
+                const renderVp = jsPage.getViewport({ scale: 200 / 72 });
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(renderVp.width));
+                canvas.height = Math.max(1, Math.round(renderVp.height));
+                const ctx = canvas.getContext('2d', { alpha: false });
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                await jsPage.render({ canvasContext: ctx, viewport: renderVp }).promise;
+                rasters.set(pageIdx, {
+                    jpg: dataUrlToUint8Array(canvas.toDataURL('image/jpeg', 0.9)),
+                    width: baseVp.width,
+                    height: baseVp.height,
+                });
+                canvas.width = 0;
+                canvas.height = 0;
+            }
+        } finally {
+            await jsDoc.destroy();
+        }
+
+        const src = await PDFDocument.load(bytes);
+
+        // 2. Flatten form fields so no field dictionary links pages together.
+        try {
+            const form = src.getForm();
+            if (form.getFields().length > 0) form.flatten();
+        } catch {
+            // Flattening failed: drop the form and every widget annotation instead.
+            src.catalog.delete(PDFName.of('AcroForm'));
+            for (const page of src.getPages()) {
+                const annots = page.node.lookup(PDFName.of('Annots'));
+                if (!(annots instanceof PDFArray)) continue;
+                const keep = [];
+                for (let i = 0; i < annots.size(); i++) {
+                    const a = annots.lookup(i);
+                    if (a instanceof PDFDict && a.get(PDFName.of('Subtype'))?.toString() === '/Widget') continue;
+                    keep.push(annots.get(i));
+                }
+                page.node.set(PDFName.of('Annots'), src.context.obj(keep));
+            }
+        }
+
+        // 3. Strip the redacted pages in place, and cut annotation back-references between pages.
+        const srcPages = src.getPages();
+        srcPages.forEach((page, idx) => {
+            const node = page.node;
+            if (rasters.has(idx)) {
+                const { width, height } = rasters.get(idx);
+                for (const key of node.keys()) {
+                    const k = key.toString();
+                    if (k !== '/Type' && k !== '/Parent') node.delete(key);
+                }
+                // Set inheritable attributes explicitly so the copier cannot pull them from the tree.
+                node.set(PDFName.of('MediaBox'), src.context.obj([0, 0, width, height]));
+                node.set(PDFName.of('CropBox'), src.context.obj([0, 0, width, height]));
+                node.set(PDFName.of('Rotate'), src.context.obj(0));
+                node.set(PDFName.of('Resources'), src.context.obj({}));
+                return;
+            }
+            node.delete(PDFName.of('Metadata'));
+            node.delete(PDFName.of('PieceInfo'));
+            const annots = node.lookup(PDFName.of('Annots'));
+            if (annots instanceof PDFArray) {
+                for (let i = 0; i < annots.size(); i++) {
+                    const a = annots.lookup(i);
+                    if (a instanceof PDFDict) {
+                        a.delete(PDFName.of('P'));
+                        a.delete(PDFName.of('IRT'));
+                    }
+                }
+            }
+        });
+
+        // 4. Copy everything that is still reachable into a fresh document (no Info/XMP).
+        const fresh = await PDFDocument.create({ updateMetadata: false });
+        const copied = await fresh.copyPages(src, srcPages.map((_, i) => i));
+        for (let i = 0; i < copied.length; i++) {
+            const page = fresh.addPage(copied[i]);
+            const raster = rasters.get(i);
+            if (raster) {
+                const img = await fresh.embedJpg(raster.jpg);
+                page.drawImage(img, { x: 0, y: 0, width: raster.width, height: raster.height });
+            }
+        }
+
+        return new Uint8Array(await fresh.save());
     }
 
     async function drawSafePdfText(pdfDoc, pdfPage, meta, box, opts) {
