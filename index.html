@@ -250,6 +250,7 @@
                                 <button type="button" id="org-nudge-left" class="btn btn-ghost btn-xs" title="Nudge selected left (←)" disabled>← Nudge</button>
                                 <button type="button" id="org-nudge-right" class="btn btn-ghost btn-xs" title="Nudge selected right (→)" disabled>Nudge →</button>
                                 <button type="button" id="org-rotate-selected" class="btn btn-ghost btn-xs" disabled>↻ Rotate 90°</button>
+                                <button type="button" id="org-crop-selected" class="btn btn-ghost btn-xs" disabled>✂ Crop</button>
                                 <button type="button" id="org-delete-selected" class="btn btn-ghost btn-xs" disabled>Delete Selected</button>
                                 <button type="button" id="org-reverse-btn" class="btn btn-ghost btn-xs" disabled>Reverse Order</button>
                                 <button type="button" id="org-add-blank-btn" class="btn btn-secondary btn-xs">+ Blank Page</button>
@@ -296,6 +297,31 @@
                                 <input type="number" id="org-burst-size" class="input input-sm" value="1" min="1" />
                                 <button type="button" id="org-burst-zip-btn" class="btn btn-secondary btn-sm" disabled>Split to .ZIP</button>
                             </div>
+                        </div>
+
+                        <hr class="divider" />
+
+                        <div class="side-section">
+                            <h3 class="side-title">Export as Images</h3>
+                            <div class="img-export-grid">
+                                <div>
+                                    <label class="field-label" for="org-img-format">Format</label>
+                                    <select id="org-img-format" class="input input-sm">
+                                        <option value="jpg" selected>JPG</option>
+                                        <option value="png">PNG</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="field-label" for="org-img-dpi">Resolution</label>
+                                    <select id="org-img-dpi" class="input input-sm">
+                                        <option value="72">72 DPI (screen)</option>
+                                        <option value="150" selected>150 DPI</option>
+                                        <option value="300">300 DPI (print)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p id="org-img-scope" class="muted-text img-export-scope">All pages, one image each. More than one page downloads as a .zip.</p>
+                            <button type="button" id="org-img-export-btn" class="btn btn-secondary btn-sm" disabled>Export Images</button>
                         </div>
                     </div>
                 </aside>

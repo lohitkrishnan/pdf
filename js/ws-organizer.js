@@ -11,7 +11,7 @@ import {
     stripPdfExtension,
 } from './pdf-utils.js';
 import { openPreviewModal } from './preview-modal.js';
-import { createZip } from './zip.js';
+import { createZip, crc32 } from './zip.js';
 import { createOrganizerSamples } from './samples.js';
 
 export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
@@ -53,6 +53,12 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
     const burstSizeInput = root.querySelector('#org-burst-size');
     const burstZipBtn = root.querySelector('#org-burst-zip-btn');
 
+    const cropSelBtn = root.querySelector('#org-crop-selected');
+    const imgFormatSel = root.querySelector('#org-img-format');
+    const imgDpiSel = root.querySelector('#org-img-dpi');
+    const imgScopeEl = root.querySelector('#org-img-scope');
+    const imgExportBtn = root.querySelector('#org-img-export-btn');
+
     function promptPasswordModal(filename) {
         return new Promise((resolve) => {
             const backdrop = document.createElement('div');
@@ -88,9 +94,10 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         });
     }
 
-    async function renderSingleThumbnail(pdfDoc, pageIndexZeroBased, rotationDelta = 0) {
-        const page = await pdfDoc.getPage(pageIndexZeroBased + 1);
-        const totalRotation = ((page.rotate || 0) + rotationDelta) % 360;
+    async function renderSingleThumbnail(pdfDoc, item) {
+        const page = await pdfDoc.getPage(item.sourcePageIndex + 1);
+        item.intrinsicRotate = page.rotate || 0;
+        const totalRotation = (item.intrinsicRotate + item.rotationDelta) % 360;
         const baseVp = page.getViewport({ scale: 1, rotation: totalRotation });
         const targetWidth = 176;
         const scale = targetWidth / baseVp.width;
@@ -104,10 +111,11 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         await page.render({ canvasContext: ctx, viewport: vp }).promise;
-        return canvas.toDataURL('image/jpeg', 0.85);
+        return cropCanvasToDataUrl(canvas, item.crop ? baseToVisual(item.crop, totalRotation) : null, 'image/jpeg');
     }
 
-    function createBlankThumbnail(rotationDelta = 0) {
+    function createBlankThumbnail(item) {
+        const rotationDelta = item?.rotationDelta || 0;
         const canvas = document.createElement('canvas');
         const landscape = rotationDelta % 180 !== 0;
         canvas.width = landscape ? 176 : 124;
@@ -122,14 +130,78 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('Blank A4', canvas.width / 2, canvas.height / 2 + 4);
-        return canvas.toDataURL('image/png');
+        return cropCanvasToDataUrl(canvas, item?.crop ? baseToVisual(item.crop, rotationDelta) : null, 'image/png');
+    }
+
+    // ---------- Crop geometry ----------
+    // A page's crop is stored as margins {t, r, b, l}: fractions of the page's own *unrotated*
+    // visible box to cut away from each side. Storing it unrotated means rotating a page later
+    // turns the crop with it. The crop dialog works in visual (as-displayed) orientation.
+    const SIDES = ['t', 'r', 'b', 'l'];
+    function quarterTurns(rotation) {
+        return ((Math.round(rotation / 90) % 4) + 4) % 4;
+    }
+    // A page shown rotated 90° clockwise has its left edge at the top, and so on.
+    function visualToBase(vis, rotation) {
+        const k = quarterTurns(rotation);
+        const out = {};
+        SIDES.forEach((side, i) => { out[side] = vis[SIDES[(i + k) % 4]]; });
+        return out;
+    }
+    function baseToVisual(base, rotation) {
+        const k = quarterTurns(rotation);
+        const out = {};
+        SIDES.forEach((side, i) => { out[side] = base[SIDES[(i - k + 4) % 4]]; });
+        return out;
+    }
+    function isNoCrop(m) {
+        return !m || SIDES.every((side) => (m[side] || 0) < 0.0005);
+    }
+    function totalRotationOf(item) {
+        return ((item.intrinsicRotate || 0) + (item.rotationDelta || 0)) % 360;
+    }
+
+    function cropCanvasToDataUrl(canvas, vis, type) {
+        if (isNoCrop(vis)) return canvas.toDataURL(type, 0.85);
+        const sx = Math.round(vis.l * canvas.width);
+        const sy = Math.round(vis.t * canvas.height);
+        const sw = Math.max(1, Math.round(canvas.width * (1 - vis.l - vis.r)));
+        const sh = Math.max(1, Math.round(canvas.height * (1 - vis.t - vis.b)));
+        const out = document.createElement('canvas');
+        out.width = sw;
+        out.height = sh;
+        out.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        return out.toDataURL(type, 0.85);
+    }
+
+    // Shrinks the page's boxes to the crop. Content outside stays in the file (hidden, not removed).
+    function applyCropToPage(page, crop) {
+        if (isNoCrop(crop)) return;
+        const media = page.getMediaBox();
+        const cropBox = page.getCropBox();
+        // Visible area is the CropBox clipped to the MediaBox (what viewers and pdf.js show).
+        const x0 = Math.max(media.x, cropBox.x);
+        const y0 = Math.max(media.y, cropBox.y);
+        const x1 = Math.min(media.x + media.width, cropBox.x + cropBox.width);
+        const y1 = Math.min(media.y + media.height, cropBox.y + cropBox.height);
+        const w = x1 - x0;
+        const h = y1 - y0;
+        const x = x0 + crop.l * w;
+        const y = y0 + crop.b * h;
+        const cw = Math.max(1, w * (1 - crop.l - crop.r));
+        const ch = Math.max(1, h * (1 - crop.t - crop.b));
+        page.setMediaBox(x, y, cw, ch);
+        page.setCropBox(x, y, cw, ch);
+        page.setTrimBox(x, y, cw, ch);
+        page.setBleedBox(x, y, cw, ch);
+        page.setArtBox(x, y, cw, ch);
     }
 
     async function refreshThumbnailsForItems(items) {
         const byDoc = new Map();
         for (const item of items) {
             if (item.isBlankA4) {
-                item.thumbnailDataUrl = createBlankThumbnail(item.rotationDelta);
+                item.thumbnailDataUrl = createBlankThumbnail(item);
                 continue;
             }
             if (!byDoc.has(item.docId)) byDoc.set(item.docId, []);
@@ -142,7 +214,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             const pdf = await pdfjsLib.getDocument({ data: docEntry.bytes.slice(0) }).promise;
             try {
                 for (const item of docItems) {
-                    item.thumbnailDataUrl = await renderSingleThumbnail(pdf, item.sourcePageIndex, item.rotationDelta);
+                    item.thumbnailDataUrl = await renderSingleThumbnail(pdf, item);
                 }
             } finally {
                 await pdf.destroy();
@@ -177,6 +249,11 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         extractDownloadBtn.disabled = noPages;
         extractPreviewBtn.disabled = noPages;
         burstZipBtn.disabled = noPages;
+        cropSelBtn.disabled = noSel;
+        imgExportBtn.disabled = noPages;
+        imgScopeEl.textContent = selected > 0
+            ? `${selected} selected page${selected === 1 ? '' : 's'}, one image each.${selected > 1 ? ' Downloads as a .zip.' : ''}`
+            : 'All pages, one image each. More than one page downloads as a .zip.';
     }
 
     function nudgeSelected(direction) {
@@ -321,6 +398,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
                     </label>
                     <button type="button" class="thumb-drag-handle js-drag-handle" title="Drag to reorder" aria-label="Drag page ${index + 1} to reorder">⠿</button>
                     ${item.rotationDelta ? `<span class="badge badge-neutral">${item.rotationDelta}°</span>` : ''}
+                    ${!isNoCrop(item.crop) ? '<span class="badge badge-neutral badge-crop" title="Cropped">✂</span>' : ''}
                 </div>
                 <div class="thumb-img-wrap">
                     <img src="${item.thumbnailDataUrl}" alt="Page ${index + 1} from ${escapeHtml(item.docName)}" draggable="false" />
@@ -430,17 +508,20 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
 
         try {
             for (let i = 0; i < pdf.numPages; i++) {
-                const thumb = await renderSingleThumbnail(pdf, i, 0);
-                state.pages.push({
+                const item = {
                     id: nextPageId++,
                     docId,
                     docName: name,
                     sourcePageIndex: i,
                     rotationDelta: 0,
-                    thumbnailDataUrl: thumb,
+                    intrinsicRotate: 0,
+                    crop: null,
+                    thumbnailDataUrl: '',
                     isBlankA4: false,
                     selected: false,
-                });
+                };
+                item.thumbnailDataUrl = await renderSingleThumbnail(pdf, item);
+                state.pages.push(item);
             }
         } finally {
             await pdf.destroy();
@@ -508,6 +589,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
                 if (item.rotationDelta) {
                     blank.setRotation(degrees(item.rotationDelta));
                 }
+                applyCropToPage(blank, item.crop);
                 continue;
             }
 
@@ -521,6 +603,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             const [copied] = await outDoc.copyPages(srcDoc, [item.sourcePageIndex]);
             const existingAngle = copied.getRotation().angle || 0;
             copied.setRotation(degrees((existingAngle + item.rotationDelta) % 360));
+            applyCropToPage(copied, item.crop);
             outDoc.addPage(copied);
         }
 
@@ -592,7 +675,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             docName: 'Blank A4',
             sourcePageIndex: 0,
             rotationDelta: 0,
-            thumbnailDataUrl: createBlankThumbnail(0),
+            thumbnailDataUrl: createBlankThumbnail(null),
             isBlankA4: true,
             selected: false,
         });
@@ -739,6 +822,359 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         } catch (err) {
             toast(err?.message || 'Burst split failed.', 'error');
         } finally {
+            state.busy = false;
+            updateControls();
+        }
+    });
+
+    // ---------- Crop dialog ----------
+    async function renderPageForCrop(item, maxW, maxH) {
+        const rotation = totalRotationOf(item);
+        if (item.isBlankA4) {
+            const landscape = rotation % 180 !== 0;
+            const [w, h] = landscape ? [841.89, 595.28] : [595.28, 841.89];
+            const scale = Math.min(maxW / w, maxH / h);
+            const c = document.createElement('canvas');
+            c.width = Math.round(w * scale);
+            c.height = Math.round(h * scale);
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, c.width, c.height);
+            return c;
+        }
+        const entry = state.docs.get(item.docId);
+        const pdf = await pdfjsLib.getDocument({ data: entry.bytes.slice(0) }).promise;
+        try {
+            const page = await pdf.getPage(item.sourcePageIndex + 1);
+            const base = page.getViewport({ scale: 1, rotation });
+            const scale = Math.min(maxW / base.width, maxH / base.height);
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const vp = page.getViewport({ scale: scale * dpr, rotation });
+            const c = document.createElement('canvas');
+            c.width = Math.round(vp.width);
+            c.height = Math.round(vp.height);
+            c.style.width = `${Math.round(vp.width / dpr)}px`;
+            const ctx = c.getContext('2d', { alpha: false });
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, c.width, c.height);
+            await page.render({ canvasContext: ctx, viewport: vp }).promise;
+            return c;
+        } finally {
+            await pdf.destroy();
+        }
+    }
+
+    // Bounding box of non-background pixels, as visual margins with a little padding.
+    function detectContentMargins(canvas) {
+        const { width, height } = canvas;
+        const data = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+        const bg = [data[0], data[1], data[2]];
+        let minX = width, minY = height, maxX = -1, maxY = -1;
+        const step = Math.max(1, Math.floor(Math.min(width, height) / 500));
+        for (let y = 0; y < height; y += step) {
+            for (let x = 0; x < width; x += step) {
+                const i = (y * width + x) * 4;
+                if (Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]) > 36) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+        if (maxX < 0) return null;
+        const pad = 0.015;
+        return {
+            l: Math.max(0, minX / width - pad),
+            t: Math.max(0, minY / height - pad),
+            r: Math.max(0, 1 - (maxX + step) / width - pad),
+            b: Math.max(0, 1 - (maxY + step) / height - pad),
+        };
+    }
+
+    async function openCropDialog() {
+        const selectedItems = state.pages.filter((p) => p.selected);
+        if (selectedItems.length === 0) return;
+        const ref = selectedItems[0];
+        const refRotation = totalRotationOf(ref);
+        let vis = ref.crop ? baseToVisual(ref.crop, refRotation) : { t: 0, r: 0, b: 0, l: 0 };
+        const MIN = 0.05; // the kept area is at least 5% of the page in each direction
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = `
+            <div class="modal-dialog crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title">
+                <header class="modal-header">
+                    <h3 class="modal-title" id="crop-title">Crop pages</h3>
+                    <button type="button" class="btn btn-ghost btn-sm js-cancel" aria-label="Close">✕</button>
+                </header>
+                <div class="crop-body">
+                    <div class="crop-stage js-stage"><div class="muted-text">Rendering page…</div></div>
+                    <div class="crop-controls">
+                        <p class="muted-text crop-note">Drag on the page to draw the area to keep, or drag the box and its corners.</p>
+                        <div class="crop-margins">
+                            ${['t', 'r', 'b', 'l'].map((k) => `
+                                <div>
+                                    <label class="field-label" for="crop-${k}">${{ t: 'Top', r: 'Right', b: 'Bottom', l: 'Left' }[k]} %</label>
+                                    <input type="number" id="crop-${k}" class="input input-sm js-margin" data-side="${k}" min="0" max="95" step="0.5" />
+                                </div>`).join('')}
+                        </div>
+                        <div class="btn-row">
+                            <button type="button" class="btn btn-ghost btn-xs js-auto">Auto-trim margins</button>
+                            <button type="button" class="btn btn-ghost btn-xs js-reset">Reset</button>
+                        </div>
+                        <fieldset class="crop-scope">
+                            <legend class="field-label">Apply to</legend>
+                            <label class="checkbox-row"><input type="radio" name="crop-scope" value="selected" checked /> <span>Selected pages (${selectedItems.length})</span></label>
+                            <label class="checkbox-row"><input type="radio" name="crop-scope" value="all" /> <span>All pages (${state.pages.length})</span></label>
+                        </fieldset>
+                        <p class="muted-text crop-note">Cropping hides everything outside the box, but it stays in the file. To remove sensitive content, use Redact instead.</p>
+                        <div class="modal-footer-btns">
+                            <button type="button" class="btn btn-ghost btn-sm js-cancel">Cancel</button>
+                            <button type="button" class="btn btn-primary btn-sm js-apply">Apply crop</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(backdrop);
+        document.body.classList.add('modal-open'); // pauses the grid's keyboard shortcuts
+
+        const stage = backdrop.querySelector('.js-stage');
+        const inputs = [...backdrop.querySelectorAll('.js-margin')];
+        let canvas = null;
+        let rectEl = null;
+
+        const close = () => {
+            document.removeEventListener('keydown', onKey);
+            document.body.classList.remove('modal-open');
+            backdrop.remove();
+        };
+        const onKey = (e) => { if (e.key === 'Escape') close(); };
+        document.addEventListener('keydown', onKey);
+        backdrop.querySelectorAll('.js-cancel').forEach((b) => b.addEventListener('click', close));
+
+        const clampVis = (v) => {
+            const out = { ...v };
+            for (const k of SIDES) out[k] = Math.min(0.95, Math.max(0, out[k] || 0));
+            if (1 - out.l - out.r < MIN) {
+                const over = out.l + out.r - (1 - MIN);
+                out.l -= over / 2;
+                out.r -= over / 2;
+            }
+            if (1 - out.t - out.b < MIN) {
+                const over = out.t + out.b - (1 - MIN);
+                out.t -= over / 2;
+                out.b -= over / 2;
+            }
+            return out;
+        };
+        const sync = (fromInputs = false) => {
+            vis = clampVis(vis);
+            if (rectEl) {
+                rectEl.style.left = `${vis.l * 100}%`;
+                rectEl.style.top = `${vis.t * 100}%`;
+                rectEl.style.width = `${(1 - vis.l - vis.r) * 100}%`;
+                rectEl.style.height = `${(1 - vis.t - vis.b) * 100}%`;
+            }
+            if (!fromInputs) {
+                inputs.forEach((inp) => { inp.value = (vis[inp.dataset.side] * 100).toFixed(1); });
+            }
+        };
+        inputs.forEach((inp) => inp.addEventListener('input', () => {
+            vis[inp.dataset.side] = (Number(inp.value) || 0) / 100;
+            sync(true);
+        }));
+        sync();
+
+        canvas = await renderPageForCrop(ref, 460, Math.min(560, window.innerHeight * 0.62)).catch(() => null);
+        if (!backdrop.isConnected) return;
+        if (!canvas) {
+            stage.innerHTML = '<div class="muted-text">Could not render this page.</div>';
+            return;
+        }
+        stage.replaceChildren(canvas);
+        rectEl = document.createElement('div');
+        rectEl.className = 'crop-rect';
+        rectEl.innerHTML = ['nw', 'ne', 'sw', 'se'].map((h) => `<span class="crop-handle" data-h="${h}"></span>`).join('');
+        stage.appendChild(rectEl);
+        sync();
+
+        // Pointer interaction: draw a new box, move the box, or drag a corner.
+        const toFrac = (e) => {
+            const r = canvas.getBoundingClientRect();
+            return {
+                x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+                y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+            };
+        };
+        stage.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            stage.setPointerCapture(e.pointerId);
+            const start = toFrac(e);
+            const startVis = { ...vis };
+            const handle = e.target.closest('.crop-handle')?.dataset.h;
+            const mode = handle ? 'resize' : e.target.closest('.crop-rect') ? 'move' : 'draw';
+            const onMove = (ev) => {
+                const p = toFrac(ev);
+                if (mode === 'draw') {
+                    vis = { l: Math.min(start.x, p.x), r: 1 - Math.max(start.x, p.x), t: Math.min(start.y, p.y), b: 1 - Math.max(start.y, p.y) };
+                } else if (mode === 'move') {
+                    const w = 1 - startVis.l - startVis.r;
+                    const h = 1 - startVis.t - startVis.b;
+                    const l = Math.min(1 - w, Math.max(0, startVis.l + p.x - start.x));
+                    const t = Math.min(1 - h, Math.max(0, startVis.t + p.y - start.y));
+                    vis = { l, t, r: 1 - w - l, b: 1 - h - t };
+                } else {
+                    vis = { ...startVis };
+                    if (handle.includes('w')) vis.l = Math.min(p.x, 1 - startVis.r - MIN);
+                    if (handle.includes('e')) vis.r = Math.min(1 - p.x, 1 - startVis.l - MIN);
+                    if (handle.includes('n')) vis.t = Math.min(p.y, 1 - startVis.b - MIN);
+                    if (handle.includes('s')) vis.b = Math.min(1 - p.y, 1 - startVis.t - MIN);
+                }
+                sync();
+            };
+            const onUp = () => {
+                stage.removeEventListener('pointermove', onMove);
+                stage.removeEventListener('pointerup', onUp);
+                stage.removeEventListener('pointercancel', onUp);
+                // A click without a drag in "draw" mode shouldn't collapse the box.
+                if (mode === 'draw' && (1 - vis.l - vis.r < 0.02 || 1 - vis.t - vis.b < 0.02)) {
+                    vis = startVis;
+                    sync();
+                }
+            };
+            stage.addEventListener('pointermove', onMove);
+            stage.addEventListener('pointerup', onUp);
+            stage.addEventListener('pointercancel', onUp);
+        });
+
+        backdrop.querySelector('.js-reset').addEventListener('click', () => {
+            vis = { t: 0, r: 0, b: 0, l: 0 };
+            sync();
+        });
+        backdrop.querySelector('.js-auto').addEventListener('click', () => {
+            const m = detectContentMargins(canvas);
+            if (!m) {
+                toast('This page looks blank, so there is nothing to trim to.', 'warn');
+                return;
+            }
+            vis = m;
+            sync();
+        });
+
+        backdrop.querySelector('.js-apply').addEventListener('click', async () => {
+            const scope = backdrop.querySelector('input[name="crop-scope"]:checked').value;
+            const targets = scope === 'all' ? state.pages : selectedItems;
+            const finalVis = clampVis(vis);
+            for (const item of targets) {
+                // The same visual margins on every page, converted to each page's own orientation.
+                item.crop = isNoCrop(finalVis) ? null : visualToBase(finalVis, totalRotationOf(item));
+            }
+            close();
+            await refreshThumbnailsForItems(targets);
+            renderGrid();
+            toast(isNoCrop(finalVis)
+                ? `Removed the crop from ${targets.length} page${targets.length === 1 ? '' : 's'}.`
+                : `Cropped ${targets.length} page${targets.length === 1 ? '' : 's'}.`, 'ok');
+        });
+    }
+
+    cropSelBtn.addEventListener('click', () => openCropDialog());
+
+    // ---------- Export pages as images ----------
+    const MAX_IMAGE_PIXELS = 40_000_000; // keeps canvases within browser limits
+    const MAX_IMAGE_SIDE = 16_000;
+
+    // Record the DPI in the file so print and layout apps use the intended physical size.
+    function setJpegDpi(bytes, dpi) {
+        // JFIF APP0: FF D8 FF E0 len(2) "JFIF\0" version(2) units(1) Xdensity(2) Ydensity(2)
+        if (bytes[2] === 0xff && bytes[3] === 0xe0 && bytes[6] === 0x4a && bytes[7] === 0x46 && bytes[8] === 0x49 && bytes[9] === 0x46) {
+            bytes[13] = 1;
+            bytes[14] = (dpi >> 8) & 0xff;
+            bytes[15] = dpi & 0xff;
+            bytes[16] = (dpi >> 8) & 0xff;
+            bytes[17] = dpi & 0xff;
+        }
+        return bytes;
+    }
+    function setPngDpi(bytes, dpi) {
+        // Insert a pHYs chunk (pixels per metre) right after IHDR (8-byte signature + 25-byte IHDR).
+        const ppm = Math.round(dpi / 0.0254);
+        const chunk = new Uint8Array(21);
+        const view = new DataView(chunk.buffer);
+        view.setUint32(0, 9);
+        chunk.set([0x70, 0x48, 0x59, 0x73], 4); // "pHYs"
+        view.setUint32(8, ppm);
+        view.setUint32(12, ppm);
+        chunk[16] = 1; // unit: metre
+        view.setUint32(17, crc32(chunk.subarray(4, 17)));
+        const out = new Uint8Array(bytes.length + chunk.length);
+        out.set(bytes.subarray(0, 33), 0);
+        out.set(chunk, 33);
+        out.set(bytes.subarray(33), 33 + chunk.length);
+        return out;
+    }
+
+    imgExportBtn.addEventListener('click', async () => {
+        if (state.pages.length === 0) return;
+        const selectedItems = state.pages.filter((p) => p.selected);
+        const items = selectedItems.length > 0 ? selectedItems : state.pages;
+        const format = imgFormatSel.value === 'png' ? 'png' : 'jpg';
+        const mime = format === 'png' ? 'image/png' : 'image/jpeg';
+        const dpi = Number(imgDpiSel.value) || 150;
+        const base = suggestedBaseName();
+        const digits = String(state.pages.length).length;
+        const label = imgExportBtn.textContent;
+
+        state.busy = true;
+        updateControls();
+        let pdf = null;
+        try {
+            // Build from the page list so rotation and crop are included.
+            const bytes = await buildPdfFromItems(items);
+            pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+            const entries = [];
+            let reduced = false;
+            for (let i = 1; i <= pdf.numPages; i++) {
+                imgExportBtn.textContent = `Rendering ${i} / ${pdf.numPages}…`;
+                const page = await pdf.getPage(i);
+                let scale = dpi / 72;
+                let vp = page.getViewport({ scale });
+                const shrink = Math.min(1, Math.sqrt(MAX_IMAGE_PIXELS / (vp.width * vp.height)), MAX_IMAGE_SIDE / Math.max(vp.width, vp.height));
+                if (shrink < 1) {
+                    scale *= shrink;
+                    vp = page.getViewport({ scale });
+                    reduced = true;
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.floor(vp.width));
+                canvas.height = Math.max(1, Math.floor(vp.height));
+                const ctx = canvas.getContext('2d', { alpha: false });
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                await page.render({ canvasContext: ctx, viewport: vp }).promise;
+                const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, 0.92));
+                canvas.width = 0;
+                canvas.height = 0;
+                if (!blob) throw new Error('The browser could not encode this page as an image.');
+                let data = new Uint8Array(await blob.arrayBuffer());
+                const effectiveDpi = Math.round(scale * 72);
+                data = format === 'png' ? setPngDpi(data, effectiveDpi) : setJpegDpi(data, effectiveDpi);
+                const pageNo = String(state.pages.indexOf(items[i - 1]) + 1).padStart(digits, '0');
+                entries.push({ name: `${base}_page_${pageNo}.${format}`, data });
+            }
+
+            if (entries.length === 1) {
+                downloadBlob(entries[0].data, entries[0].name, mime);
+            } else {
+                downloadBlob(createZip(entries), `${base}_${format}_${dpi}dpi.zip`, 'application/zip');
+            }
+            toast(`Exported ${entries.length} image${entries.length === 1 ? '' : 's'}${reduced ? ' (very large pages were scaled down to fit browser limits)' : ''}.`, 'ok');
+        } catch (err) {
+            toast(err?.message || 'Image export failed.', 'error');
+        } finally {
+            if (pdf) await pdf.destroy();
+            imgExportBtn.textContent = label;
             state.busy = false;
             updateControls();
         }
