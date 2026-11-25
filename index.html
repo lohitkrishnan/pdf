@@ -345,13 +345,13 @@
             <div class="ed-shell-layout">
                 <!-- WORKSPACE 3 SIDEBAR: Fill Forms & Sign -->
                 <aside id="ws-fill-sidebar" class="ed-sidebar panel-card">
-                    <div class="side-header-actions">
+                    <div class="side-header-actions" data-sheet-section="open">
                         <input type="file" id="ed3-file-input" accept=".pdf,application/pdf" hidden />
                         <button type="button" id="ed3-upload-btn" class="btn btn-secondary btn-sm">Open PDF</button>
                         <button type="button" id="ed3-sample-btn" class="btn btn-ghost btn-sm">Load Sample Fillable NDA</button>
                     </div>
 
-                    <div class="side-section">
+                    <div class="side-section" data-sheet-section="fields">
                         <div class="side-title-row">
                             <h3 class="side-title">Interactive AcroForm</h3>
                             <span id="ed3-form-count" class="badge badge-neutral">0 fields</span>
@@ -365,7 +365,7 @@
 
                     <hr class="divider" />
 
-                    <div class="side-section">
+                    <div class="side-section" data-sheet-section="sign">
                         <h3 class="side-title">Signature &amp; Stamp Studio</h3>
                         <div class="segmented-control segmented-sm" role="group" aria-label="Signature input method">
                             <button type="button" class="seg-btn js-sig-tab is-active" data-sig-tab="draw">Draw</button>
@@ -413,7 +413,7 @@
 
                     <hr class="divider" />
 
-                    <div class="btn-stack">
+                    <div class="btn-stack" data-sheet-section="save">
                         <button type="button" class="btn btn-secondary btn-block js-ed-preview" disabled>Preview Compiled PDF</button>
                         <button type="button" class="btn btn-primary btn-block js-ed-download" data-mobile-cta disabled>Download Edited PDF</button>
                     </div>
@@ -421,13 +421,13 @@
 
                 <!-- WORKSPACE 4 SIDEBAR: Edit Text, Overlay, Whiteout & Redact -->
                 <aside id="ws-redact-sidebar" class="ed-sidebar panel-card" hidden>
-                    <div class="side-header-actions">
+                    <div class="side-header-actions" data-sheet-section="open">
                         <input type="file" id="ed4-file-input" accept=".pdf,application/pdf" hidden />
                         <button type="button" id="ed4-upload-btn" class="btn btn-secondary btn-sm">Open PDF</button>
                         <button type="button" id="ed4-sample-btn" class="btn btn-ghost btn-sm">Load Sample Confidential PDF</button>
                     </div>
 
-                    <div class="side-section">
+                    <div class="side-section" data-sheet-section="tools">
                         <h3 class="side-title">Edit &amp; Redact Tools</h3>
                         <div class="tool-grid">
                             <button type="button" class="tool-btn js-ed-tool is-active" data-tool="select">Select / Move</button>
@@ -483,7 +483,7 @@
 
                     <hr class="divider" />
 
-                    <div class="side-section">
+                    <div class="side-section" data-sheet-section="edits">
                         <div class="side-title-row">
                             <h3 class="side-title">Edits &amp; Overlays</h3>
                             <span id="ed4-overlay-count" class="badge badge-neutral">0</span>
@@ -498,7 +498,7 @@
 
                     <hr class="divider" />
 
-                    <div class="btn-stack">
+                    <div class="btn-stack" data-sheet-section="save">
                         <button type="button" class="btn btn-secondary btn-block js-ed-preview" disabled>Preview Compiled PDF</button>
                         <button type="button" class="btn btn-primary btn-block js-ed-download" data-mobile-cta disabled>Download Edited PDF</button>
                     </div>

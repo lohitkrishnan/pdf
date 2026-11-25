@@ -5,7 +5,7 @@
 // old one and takes over only when the user chooses to reload, so work in progress is safe.
 
 const CACHE_PREFIX = 'lk-pdf-studio-';
-const VERSION = '8de71ff626c6';
+const VERSION = '2bcf07ee0456';
 const FILES = [
     './',
     './css/app.css',
@@ -16,6 +16,7 @@ const FILES = [
     './js/app.js',
     './js/mobile.js',
     './js/pdf-utils.js',
+    './js/phone-editor.js',
     './js/preview-modal.js',
     './js/qpdf-engine.js',
     './js/samples.js',
@@ -34,6 +35,9 @@ const FILES = [
     './vendor/qpdf.wasm'
 ];
 const CACHE = CACHE_PREFIX + VERSION;
+// Files shared into the installed app from another app (Android's share menu) wait here until
+// the page picks them up. They are deleted as soon as the page has read them.
+const SHARE_CACHE = CACHE_PREFIX + 'shared';
 
 self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
@@ -46,7 +50,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil((async () => {
         const keys = await caches.keys();
-        await Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k)));
+        await Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE && k !== SHARE_CACHE).map((k) => caches.delete(k)));
         await self.clients.claim();
     })());
 });
@@ -55,8 +59,28 @@ self.addEventListener('message', (event) => {
     if (event.data === 'skipWaiting') self.skipWaiting();
 });
 
+async function receiveShare(request) {
+    const form = await request.formData();
+    const files = form.getAll('files').filter((f) => f && typeof f === 'object' && 'size' in f);
+    await caches.delete(SHARE_CACHE);
+    const cache = await caches.open(SHARE_CACHE);
+    const list = [];
+    for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const key = `./shared/${i}`;
+        list.push({ key, name: f.name || `shared-${i + 1}`, type: f.type || '' });
+        await cache.put(key, new Response(f, { headers: { 'Content-Type': f.type || 'application/octet-stream' } }));
+    }
+    await cache.put('./shared/index', new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
+    return Response.redirect('./?shared=1', 303);
+}
+
 self.addEventListener('fetch', (event) => {
     const req = event.request;
+    if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/share-target')) {
+        event.respondWith(receiveShare(req).catch(() => Response.redirect('./', 303)));
+        return;
+    }
     if (req.method !== 'GET') return;
     const url = new URL(req.url);
     if (url.origin !== self.location.origin) return; // e.g. the page-view counter

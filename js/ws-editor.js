@@ -2656,7 +2656,7 @@ export function initEditorWorkspaces({
     });
     zoomInBtn.addEventListener('click', () => {
         if (!state.bytes) return;
-        state.zoom = Math.min(2.2, Number((state.zoom + 0.15).toFixed(2)));
+        state.zoom = Math.min(3, Number((state.zoom + 0.15).toFixed(2)));
         renderStagePages();
     });
 
@@ -2735,6 +2735,14 @@ export function initEditorWorkspaces({
     return {
         setTab,
         handleFiles: handleInputChange,
+        hasDocument: () => !!state.bytes,
+        getZoom: () => state.zoom,
+        /** Set the page zoom (clamped like the − / + buttons) and re-render the pages. */
+        setZoom: async (z) => {
+            if (!state.bytes) return;
+            state.zoom = Math.max(0.35, Math.min(3, Number(z.toFixed(2))));
+            await renderStagePages();
+        },
         loadPdf: async (entry) => {
             switchToTab('fill');
             await loadPdfDocument(entry);

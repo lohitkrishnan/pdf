@@ -1157,6 +1157,10 @@ code, kbd {
     flex-direction: column;
     align-items: center;
     gap: 1.35rem;
+    /* Grow to the widest page so zoomed-in pages can be scrolled to their left edge too
+       (centring an overflowing item pushes part of it out of reach). */
+    width: max-content;
+    min-width: 100%;
 }
 
 .ed-page-card {
@@ -1935,4 +1939,266 @@ body.has-mobile-cta .toast-container {
     .thumb-select-wrap {
         min-height: 40px;
     }
+}
+
+/* ---------- Phones: one tool menu instead of the tab row ---------- */
+
+.tool-switcher {
+    display: none;
+    position: relative;
+    padding: 0 1rem 0.6rem;
+}
+
+.tool-switcher-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    min-height: 46px;
+    padding: 0.45rem 0.8rem;
+    font: inherit;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.tool-switcher-btn .tab-num,
+.tool-switcher-item .tab-num {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+.tool-switcher-caret {
+    margin-left: auto;
+    color: var(--muted);
+}
+
+.tool-switcher-menu {
+    position: absolute;
+    left: 1rem;
+    right: 1rem;
+    top: calc(100% - 0.3rem);
+    z-index: 75;
+    display: flex;
+    flex-direction: column;
+    padding: 0.35rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+}
+
+.tool-switcher-menu[hidden] {
+    display: none;
+}
+
+.tool-switcher-item {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-height: 48px;
+    padding: 0.4rem 0.7rem;
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tool-switcher-item .tab-num {
+    background: var(--card);
+    color: var(--muted);
+}
+
+.tool-switcher-item.is-active {
+    background: var(--accent-soft);
+    font-weight: 600;
+}
+
+.tool-switcher-item.is-active .tab-num {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+.tool-switcher-item:focus-visible,
+.tool-switcher-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+@media (max-width: 720px) {
+    .workspace-tabs {
+        display: none;
+    }
+
+    .tool-switcher {
+        display: block;
+    }
+}
+
+/* ---------- Fill & Sign / Edit & Redact on phones: pages first, panels as a pull-up sheet ---------- */
+
+.pe-dock,
+.pe-sheet-head {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    .app-header {
+        position: static;
+    }
+
+    body.pe-phone {
+        padding-bottom: calc(var(--pe-dock-h, 64px) + var(--pe-sheet-h, 0px) + 12px);
+    }
+
+    body.pe-phone .toast-container {
+        bottom: calc(var(--pe-dock-h, 64px) + var(--pe-sheet-h, 0px) + 10px);
+    }
+
+    body.pe-phone .ed-shell-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    body.pe-phone .ed-stage-pane {
+        order: -1;
+        min-width: 0;
+    }
+
+    body.pe-phone .ed-stage-scroll {
+        flex: none; /* a fixed-height viewer; the pages scroll inside it */
+        height: calc(100svh - var(--pe-dock-h, 64px) - var(--pe-sheet-h, 0px) - 64px);
+        min-height: 240px;
+        touch-action: pan-x pan-y; /* two-finger pinch zooms the pages, not the whole page */
+    }
+
+    .pe-dock:not([hidden]) {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.3rem;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 65;
+        padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom, 0px));
+        background: var(--surface);
+        border-top: 1px solid var(--rule);
+        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.12);
+    }
+
+    .pe-dock-btn {
+        font: inherit;
+        font-size: 0.78rem;
+        line-height: 1.15;
+        min-height: 44px;
+        padding: 0.25rem 0.2rem;
+        border-radius: 8px;
+        border: 1px solid var(--rule);
+        background: var(--card);
+        color: var(--text);
+        cursor: pointer;
+    }
+
+    .pe-dock-btn.is-active {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+        font-weight: 600;
+    }
+
+    body.pe-phone .ed-sidebar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: var(--pe-dock-h, 64px);
+        z-index: 64;
+        max-height: 50svh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        margin: 0;
+        border-radius: 14px 14px 0 0;
+        box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.18);
+        transform: translateY(110%);
+        visibility: hidden;
+        transition: transform 0.2s ease, visibility 0.2s;
+    }
+
+    body.pe-phone .ed-sidebar.is-open {
+        transform: none;
+        visibility: visible;
+    }
+
+    body.pe-phone .ed-sidebar .pe-sheet-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: -1rem;
+        z-index: 2;
+        margin: -1rem -1rem 0.4rem;
+        padding: 0.6rem 1rem 0.4rem;
+        background: var(--surface);
+    }
+
+    body.pe-phone .ed-sidebar [data-sheet-section],
+    body.pe-phone .ed-sidebar > .divider {
+        display: none;
+    }
+
+    body.pe-phone .ed-sidebar[data-sheet="open"] [data-sheet-section="open"],
+    body.pe-phone .ed-sidebar[data-sheet="fields"] [data-sheet-section="fields"],
+    body.pe-phone .ed-sidebar[data-sheet="sign"] [data-sheet-section="sign"],
+    body.pe-phone .ed-sidebar[data-sheet="tools"] [data-sheet-section="tools"],
+    body.pe-phone .ed-sidebar[data-sheet="edits"] [data-sheet-section="edits"],
+    body.pe-phone .ed-sidebar[data-sheet="save"] [data-sheet-section="save"] {
+        display: flex;
+        flex-direction: column;
+    }
+
+    body.pe-phone .ed-sidebar[data-sheet="open"] [data-sheet-section="open"] {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+}
+
+.chooser-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.chooser-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    width: 100%;
+    min-height: 52px;
+    padding: 0.6rem 0.8rem;
+    font: inherit;
+    text-align: left;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.chooser-item span {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.chooser-item:hover,
+.chooser-item:focus-visible {
+    border-color: var(--accent);
+    outline: none;
+    background: var(--accent-soft);
 }

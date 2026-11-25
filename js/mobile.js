@@ -148,6 +148,7 @@ export function initMobileCta() {
     // Once the user scrolls past it (it's above them), the bar isn't needed.
     const below = (el) => {
         if (!el.getClientRects().length) return false; // hidden tab or panel
+        if (getComputedStyle(el).visibility === 'hidden') return false; // inside a closed sheet
         const r = el.getBoundingClientRect();
         return r.height > 0 && r.top > window.innerHeight - 8;
     };
@@ -211,4 +212,152 @@ export function wireCameraButtons() {
             target.dispatchEvent(new Event('change', { bubbles: true }));
         });
     });
+}
+
+/**
+ * On phones the row of workspace tabs doesn't fit, so it is replaced (by CSS, below 720px) with
+ * one "current tool ▾" button that opens a menu of all tools. The menu just clicks the real tab,
+ * so tab switching logic stays in one place.
+ */
+export function initToolSwitcher() {
+    const tablist = document.querySelector('[role="tablist"].workspace-tabs');
+    if (!tablist) return;
+    const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+    const wrap = document.createElement('div');
+    wrap.className = 'tool-switcher';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tool-switcher-btn';
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    const menu = document.createElement('div');
+    menu.className = 'tool-switcher-menu';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    menu.id = 'tool-switcher-menu';
+    btn.setAttribute('aria-controls', menu.id);
+
+    const items = tabs.map((tab) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'tool-switcher-item';
+        item.setAttribute('role', 'menuitemradio');
+        item.innerHTML = tab.innerHTML;
+        item.addEventListener('click', () => {
+            close();
+            tab.click();
+            btn.focus();
+        });
+        menu.appendChild(item);
+        return item;
+    });
+
+    function sync() {
+        const i = Math.max(0, tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true'));
+        btn.innerHTML = `${tabs[i].innerHTML}<span class="tool-switcher-caret" aria-hidden="true">▾</span>`;
+        btn.setAttribute('aria-label', `Tool: ${tabs[i].textContent.replace(/\s+/g, ' ').trim()}. Change tool`);
+        items.forEach((it, j) => {
+            it.setAttribute('aria-checked', String(j === i));
+            it.classList.toggle('is-active', j === i);
+        });
+    }
+
+    function open() {
+        menu.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        (items.find((it) => it.classList.contains('is-active')) || items[0]).focus();
+    }
+    function close() {
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+    }
+
+    btn.addEventListener('click', () => (menu.hidden ? open() : close()));
+    menu.addEventListener('keydown', (e) => {
+        const i = items.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+        else if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+        else if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
+        else if (e.key === 'Escape' || e.key === 'Tab') { close(); if (e.key === 'Escape') btn.focus(); }
+    });
+    document.addEventListener('pointerdown', (e) => {
+        if (!menu.hidden && !wrap.contains(e.target)) close();
+    });
+
+    wrap.append(btn, menu);
+    tablist.after(wrap);
+    new MutationObserver(sync).observe(tablist, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
+    sync();
+}
+
+/**
+ * Files shared into the installed app from another app arrive through the service worker
+ * (sw.js), which parks them in a cache and opens the app with ?shared=1. Returns them as File
+ * objects (and clears the cache), or [] when there are none.
+ */
+export async function takeSharedFiles(cacheName) {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('shared') || !('caches' in window)) return [];
+    history.replaceState(null, '', location.pathname + location.hash);
+    try {
+        const cache = await caches.open(cacheName);
+        const index = await cache.match('./shared/index');
+        if (!index) return [];
+        const list = await index.json();
+        const files = [];
+        for (const item of list) {
+            const res = await cache.match(item.key);
+            if (res) files.push(new File([await res.blob()], item.name, { type: item.type }));
+        }
+        await caches.delete(cacheName);
+        return files;
+    } catch {
+        return [];
+    }
+}
+
+/** A small dialog asking which tool to open shared files in. Options: [{ label, desc, onPick }]. */
+export function chooseTool({ title, options }) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    const dlg = document.createElement('div');
+    dlg.className = 'modal-dialog modal-dialog-sm chooser-dialog';
+    dlg.setAttribute('role', 'dialog');
+    dlg.setAttribute('aria-modal', 'true');
+    dlg.setAttribute('aria-labelledby', 'chooser-title');
+    const h = document.createElement('div');
+    h.className = 'modal-header';
+    h.innerHTML = '<h2 class="modal-title" id="chooser-title"></h2>';
+    h.querySelector('h2').textContent = title;
+    const body = document.createElement('div');
+    body.className = 'modal-body-pad chooser-list';
+    const close = () => backdrop.remove();
+    options.forEach((o) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chooser-item';
+        const strong = document.createElement('strong');
+        strong.textContent = o.label;
+        const span = document.createElement('span');
+        span.textContent = o.desc || '';
+        b.append(strong, span);
+        b.addEventListener('click', () => {
+            close();
+            o.onPick();
+        });
+        body.appendChild(b);
+    });
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-ghost btn-sm';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', close);
+    body.appendChild(cancel);
+    dlg.append(h, body);
+    backdrop.appendChild(dlg);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    backdrop.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    document.body.appendChild(backdrop);
+    body.querySelector('.chooser-item')?.focus();
 }

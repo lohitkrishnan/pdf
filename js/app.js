@@ -1,7 +1,8 @@
 import { initSecurityWorkspace } from './ws-security.js';
 import { initOrganizerWorkspace } from './ws-organizer.js';
 import { initEditorWorkspaces } from './ws-editor.js';
-import { initMobileCta, wireCameraButtons } from './mobile.js';
+import { initMobileCta, wireCameraButtons, initToolSwitcher, takeSharedFiles, chooseTool } from './mobile.js';
+import { initPhoneEditor } from './phone-editor.js';
 
 const THEME_KEY = 'lk_pdf_theme';
 
@@ -113,6 +114,8 @@ function initApp() {
         switchToTab,
     });
 
+    initPhoneEditor({ shell: edShell, fillSidebar, redactSidebar, editor: editorWs });
+
     // Arrow keys move between tabs (WAI-ARIA tabs pattern, automatic activation).
     const tabList = Array.from(navBtns);
     tabList.forEach((btn, i) => {
@@ -151,6 +154,36 @@ function initApp() {
     switchToTab('security');
     initOffline(toast);
     wireCameraButtons();
+    initToolSwitcher();
+    openSharedFiles();
+
+    // Files shared into the installed app from another app (Android's share menu).
+    async function openSharedFiles() {
+        const files = await takeSharedFiles('lk-pdf-studio-shared');
+        if (!files.length) return;
+        const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+        if (!pdfs.length) {
+            // Only images: the page organiser turns them into PDF pages.
+            switchToTab('organizer');
+            organizerWs.handleFiles(files);
+            toast(`Added ${files.length} image${files.length === 1 ? '' : 's'} as pages.`, 'ok');
+            return;
+        }
+        const n = pdfs.length;
+        const go = (tab, fn) => () => {
+            switchToTab(tab);
+            fn();
+        };
+        chooseTool({
+            title: `What would you like to do with ${n > 1 ? `these ${n} PDFs` : 'this PDF'}?`,
+            options: [
+                { label: 'Lock, Unlock & Compress', desc: 'Remove or add a password, make it smaller', onPick: go('security', () => securityWs.handleFiles(pdfs)) },
+                { label: 'Merge, Split & Pages', desc: 'Combine, reorder, rotate or delete pages', onPick: go('organizer', () => organizerWs.handleFiles(files)) },
+                { label: 'Fill Forms & Sign', desc: n > 1 ? 'Opens the first PDF' : 'Fill in fields and add a signature', onPick: go('fill', () => editorWs.handleFiles([pdfs[0]])) },
+                { label: 'Edit Text, Overlay & Redact', desc: n > 1 ? 'Opens the first PDF' : 'Change text, white out or redact', onPick: go('redact', () => editorWs.handleFiles([pdfs[0]])) },
+            ],
+        });
+    }
     initMobileCta();
 }
 
