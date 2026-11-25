@@ -1,4 +1,5 @@
 import * as pdfjsLib from '../vendor/pdf.min.mjs';
+import { deliverFile } from './mobile.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -39,14 +40,7 @@ export function stripPdfExtension(filename) {
 
 export function downloadBlob(bytes, filename, mimeType = 'application/pdf') {
     const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    deliverFile(blob, filename); // phones get a Share / Save sheet; desktops download directly
 }
 
 export async function readFileBytes(file) {

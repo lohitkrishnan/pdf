@@ -1,6 +1,7 @@
 import { initSecurityWorkspace } from './ws-security.js';
 import { initOrganizerWorkspace } from './ws-organizer.js';
 import { initEditorWorkspaces } from './ws-editor.js';
+import { initMobileCta, wireCameraButtons } from './mobile.js';
 
 const THEME_KEY = 'lk_pdf_theme';
 
@@ -149,6 +150,8 @@ function initApp() {
 
     switchToTab('security');
     initOffline(toast);
+    wireCameraButtons();
+    initMobileCta();
 }
 
 // Offline support: cache the app so it opens without a connection after one visit. When a

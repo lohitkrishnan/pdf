@@ -5,7 +5,7 @@
 // old one and takes over only when the user chooses to reload, so work in progress is safe.
 
 const CACHE_PREFIX = 'lk-pdf-studio-';
-const VERSION = '39728b356772';
+const VERSION = '8de71ff626c6';
 const FILES = [
     './',
     './css/app.css',
@@ -14,6 +14,7 @@ const FILES = [
     './img/icon-192.png',
     './img/icon-512.png',
     './js/app.js',
+    './js/mobile.js',
     './js/pdf-utils.js',
     './js/preview-modal.js',
     './js/qpdf-engine.js',

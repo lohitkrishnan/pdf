@@ -41,6 +41,7 @@
                 </div>
             </div>
             <div class="header-actions">
+                <a class="sibling-link" href="/image/">Image Studio →</a>
                 <button type="button" id="theme-toggle" class="btn btn-ghost btn-sm" aria-pressed="false">☾ Dark</button>
             </div>
         </div>
@@ -221,7 +222,7 @@
                                 <input type="checkbox" id="sec-auto-download" />
                                 <span>Auto-download each file on completion</span>
                             </label>
-                            <button type="button" id="sec-run-btn" class="btn btn-primary btn-block" disabled>Unlock / Compress PDF</button>
+                            <button type="button" id="sec-run-btn" class="btn btn-primary btn-block" data-mobile-cta disabled>Unlock / Compress PDF</button>
                         </div>
                     </div>
                 </aside>
@@ -239,6 +240,7 @@
                                 <p class="panel-sub">Combine PDFs &amp; images (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>). Owner-locked PDFs unlock automatically.</p>
                             </div>
                             <div class="header-btn-group">
+                                <button type="button" class="btn btn-secondary btn-sm touch-only" data-camera-for="org-file-input">Take photo of a page</button>
                                 <button type="button" id="org-sample-btn" class="btn btn-secondary btn-sm">Load 2 Sample Multi-Page PDFs</button>
                                 <button type="button" id="org-clear-btn" class="btn btn-ghost btn-sm" disabled>Clear</button>
                             </div>
@@ -279,7 +281,7 @@
                             <h3 class="side-title">Merge &amp; Export</h3>
                             <p class="side-desc">100% lossless assembly preserving original vector text and links.</p>
                             <div class="btn-stack">
-                                <button type="button" id="org-merge-download-btn" class="btn btn-primary btn-block" disabled>Merge &amp; Download PDF</button>
+                                <button type="button" id="org-merge-download-btn" class="btn btn-primary btn-block" data-mobile-cta disabled>Merge &amp; Download PDF</button>
                                 <button type="button" id="org-merge-preview-btn" class="btn btn-secondary btn-block" disabled>Preview Merged PDF</button>
                                 <button type="button" id="org-send-editor-btn" class="btn btn-ghost btn-block" disabled>Send Merged to Edit / Fill / Sign →</button>
                             </div>
@@ -413,7 +415,7 @@
 
                     <div class="btn-stack">
                         <button type="button" class="btn btn-secondary btn-block js-ed-preview" disabled>Preview Compiled PDF</button>
-                        <button type="button" class="btn btn-primary btn-block js-ed-download" disabled>Download Edited PDF</button>
+                        <button type="button" class="btn btn-primary btn-block js-ed-download" data-mobile-cta disabled>Download Edited PDF</button>
                     </div>
                 </aside>
 
@@ -498,7 +500,7 @@
 
                     <div class="btn-stack">
                         <button type="button" class="btn btn-secondary btn-block js-ed-preview" disabled>Preview Compiled PDF</button>
-                        <button type="button" class="btn btn-primary btn-block js-ed-download" disabled>Download Edited PDF</button>
+                        <button type="button" class="btn btn-primary btn-block js-ed-download" data-mobile-cta disabled>Download Edited PDF</button>
                     </div>
                 </aside>
 

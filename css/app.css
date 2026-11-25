@@ -1577,9 +1577,18 @@ code, kbd {
 }
 
 @media (max-width: 960px) {
+    /* minmax(0, 1fr), not 1fr: a plain 1fr column grows to fit wide content (a toolbar, a
+       canvas) and pushes the page wider than a phone screen. */
     .ws-grid-2col,
     .ed-shell-layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ws-main-col,
+    .ws-side-col,
+    .ed-sidebar,
+    .ed-stage-pane {
+        min-width: 0;
     }
 
     .sticky-panel,
@@ -1715,4 +1724,215 @@ code, kbd {
     border-radius: 10px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
     font-size: 0.9rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.sibling-link {
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.sibling-link:hover,
+.sibling-link:focus-visible {
+    color: var(--accent-text);
+    text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+    .ed-stage-scroll {
+        padding: 0.5rem;
+    }
+}
+
+/* ---------- Touch screens: finger-sized targets (desktop mouse users are unaffected) ---------- */
+
+@media (pointer: coarse) {
+    .btn,
+    .seg-btn,
+    .ws-tab,
+    .input,
+    select.input {
+        min-height: 44px;
+    }
+
+    .btn-sm,
+    .btn-xs,
+    .input-sm {
+        min-height: 40px;
+    }
+
+    .btn-xs {
+        min-width: 40px;
+    }
+
+    .checkbox-row {
+        min-height: 40px;
+        align-items: center;
+    }
+
+    .checkbox-row input[type="checkbox"],
+    .radio-card input[type="radio"] {
+        width: 22px;
+        height: 22px;
+    }
+
+    input[type="range"] {
+        min-height: 36px;
+    }
+
+    .back-home,
+    .sibling-link {
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+    }
+}
+
+@media (pointer: coarse) {
+    .ed-overlay-box {
+        touch-action: none;
+    }
+
+    .ed-resize-handle {
+        width: 22px;
+        height: 22px;
+        right: -11px;
+        bottom: -11px;
+        border-radius: 50%;
+    }
+
+    .ed-box-delete {
+        width: 32px;
+        height: 32px;
+        top: -16px;
+        right: -16px;
+        font-size: 14px;
+    }
+
+    .crop-handle {
+        width: 26px;
+        height: 26px;
+    }
+
+    .thumb-drag-handle {
+        min-width: 40px;
+        min-height: 40px;
+    }
+
+    .page-thumb-card .btn-xs,
+    .tool-btn {
+        min-height: 40px;
+    }
+}
+
+/* ---------- Phones: share sheet, pinned main button, camera buttons ---------- */
+
+.btn.touch-only {
+    display: none;
+}
+
+@media (pointer: coarse) {
+    .btn.touch-only {
+        display: inline-flex;
+    }
+}
+
+.deliver-sheet {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.85rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3);
+}
+
+.deliver-info {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: baseline;
+    min-width: 0;
+}
+
+.deliver-info strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.deliver-info span {
+    color: var(--muted);
+    font-size: 0.85rem;
+    flex: none;
+}
+
+.deliver-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.deliver-actions .btn-primary,
+.deliver-actions .btn-secondary {
+    flex: 1;
+    justify-content: center;
+}
+
+.mobile-cta {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border-top: 1px solid var(--rule);
+}
+
+.mobile-cta .btn {
+    width: 100%;
+    justify-content: center;
+}
+
+body.has-mobile-cta {
+    padding-bottom: 4.5rem;
+}
+
+body.has-mobile-cta .toast-container {
+    bottom: 5rem;
+}
+
+@media (pointer: coarse) {
+    .page-thumb-card input[type="checkbox"],
+    .checkbox-row input[type="checkbox"],
+    .ed-sidebar input[type="checkbox"],
+    .ed-sidebar input[type="radio"] {
+        width: 22px;
+        height: 22px;
+    }
+
+    .ink-swatch {
+        width: 32px;
+        height: 32px;
+    }
+
+    .thumb-select-wrap {
+        min-height: 40px;
+    }
 }

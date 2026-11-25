@@ -55,6 +55,10 @@ PDF Studio opens and every feature works with no internet connection. `manifest.
 lets browsers offer **Install** (Chrome, Edge, Android) or **Add to Home Screen** (Safari).
 Only the app's own files are cached; PDFs the user opens are never stored.
 
+On touch screens, finished files open a small sheet with **Share** and **Save to device**, the
+main button of each tool stays pinned to the bottom of narrow screens, and **Take photo of a
+page** adds a camera shot in Merge, Split & Pages. Desktop mouse users see none of this.
+
 **Before every commit that changes a file the app loads**, regenerate the cache list and version:
 
 ```bash

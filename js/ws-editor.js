@@ -289,8 +289,10 @@ export function initEditorWorkspaces({
             // Fit zoom to stage width initially
             const p1 = await state.pdfJsDoc.getPage(1);
             const vp1 = p1.getViewport({ scale: 1 });
-            const availW = Math.max(360, (stageScrollEl.clientWidth || 720) - 56);
-            state.zoom = Math.max(0.7, Math.min(1.25, Number((availW / vp1.width).toFixed(2))));
+            // On a phone the page fits the screen width (fields can be zoomed with the + button).
+            const stageW = stageScrollEl.clientWidth || 720;
+            const availW = Math.max(220, stageW - (stageW < 600 ? 24 : 56));
+            state.zoom = Math.max(0.35, Math.min(1.25, Number((availW / vp1.width).toFixed(2))));
 
             docNameLabel.textContent = state.filename;
             docMetaLabel.textContent = `${state.pdfJsDoc.numPages} page${state.pdfJsDoc.numPages === 1 ? '' : 's'} · ${formatBytes(unlocked.byteLength)}`;
@@ -2649,7 +2651,7 @@ export function initEditorWorkspaces({
     // Zoom controls
     zoomOutBtn.addEventListener('click', () => {
         if (!state.bytes) return;
-        state.zoom = Math.max(0.55, Number((state.zoom - 0.15).toFixed(2)));
+        state.zoom = Math.max(0.35, Number((state.zoom - 0.15).toFixed(2)));
         renderStagePages();
     });
     zoomInBtn.addEventListener('click', () => {
