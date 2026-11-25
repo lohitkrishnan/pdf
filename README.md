@@ -45,7 +45,25 @@ project site of the account under that domain. (If the homepage repo is ever ren
 `lohitkrishnan.github.io`, this tool falls back to `https://lohitkrishnan.github.io/pdf/`, which then
 no longer redirects.)
 
-To publish a change, push to `main`; Pages redeploys in a minute or two.
+To publish a change, run `python3 tools/update-sw.py` (see below), commit, and push to `main`;
+Pages redeploys in a minute or two.
+
+## Offline use and installing
+
+`sw.js` is a service worker that caches the app (about 5.4 MB) on the first visit, so after that
+PDF Studio opens and every feature works with no internet connection. `manifest.webmanifest`
+lets browsers offer **Install** (Chrome, Edge, Android) or **Add to Home Screen** (Safari).
+Only the app's own files are cached; PDFs the user opens are never stored.
+
+**Before every commit that changes a file the app loads**, regenerate the cache list and version:
+
+```bash
+python3 tools/update-sw.py
+```
+
+If you forget, visitors keep getting the previous version from their cache. When a new version
+is published, open copies of the page show "A new version of PDF Studio is ready" with a Reload
+button, so nobody loses work to a surprise refresh.
 To link it from the homepage (`lohitkrishnan.com/index.html`), use the same section markup:
 
 ```html

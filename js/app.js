@@ -148,6 +148,58 @@ function initApp() {
     });
 
     switchToTab('security');
+    initOffline(toast);
+}
+
+// Offline support: cache the app so it opens without a connection after one visit. When a
+// new version has downloaded, offer a reload instead of swapping files under the user's work.
+function initOffline(toast) {
+    if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+    const showUpdate = (worker) => {
+        if (document.getElementById('update-banner')) return;
+        const bar = document.createElement('div');
+        bar.id = 'update-banner';
+        bar.className = 'update-banner';
+        bar.setAttribute('role', 'status');
+        bar.innerHTML = '<span>A new version of PDF Studio is ready.</span>';
+        const reload = document.createElement('button');
+        reload.type = 'button';
+        reload.className = 'btn btn-primary btn-sm';
+        reload.textContent = 'Reload';
+        reload.addEventListener('click', () => {
+            reload.disabled = true;
+            navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
+            worker.postMessage('skipWaiting');
+        });
+        const later = document.createElement('button');
+        later.type = 'button';
+        later.className = 'btn btn-ghost btn-sm';
+        later.textContent = 'Later';
+        later.addEventListener('click', () => bar.remove());
+        bar.append(reload, later);
+        document.body.appendChild(bar);
+    };
+    window.addEventListener('load', async () => {
+        try {
+            const firstInstall = !navigator.serviceWorker.controller;
+            const reg = await navigator.serviceWorker.register('./sw.js');
+            if (reg.waiting && navigator.serviceWorker.controller) showUpdate(reg.waiting);
+            reg.addEventListener('updatefound', () => {
+                const nw = reg.installing;
+                nw?.addEventListener('statechange', () => {
+                    if (nw.state !== 'installed') return;
+                    if (navigator.serviceWorker.controller) showUpdate(nw);
+                    else if (firstInstall) toast('PDF Studio is now saved for offline use on this device.', 'ok');
+                });
+            });
+            // Look for a new version when the user comes back to a long-open tab.
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') reg.update().catch(() => {});
+            });
+        } catch {
+            // Offline support is a bonus; the app works without it.
+        }
+    });
 }
 
 document.addEventListener('DOMContentLoaded', initApp);
