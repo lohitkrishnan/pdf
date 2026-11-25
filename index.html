@@ -335,6 +335,7 @@
 
         <!-- WORKSPACE 3 & 4 SHARED SHELL -->
         <section id="ws-editor-shell" class="workspace-panel" role="tabpanel" aria-labelledby="tab-fill" hidden>
+            <h2 class="sr-only">PDF editor: fill forms, sign, edit text and redact</h2>
             <div class="ed-shell-layout">
                 <!-- WORKSPACE 3 SIDEBAR: Fill Forms & Sign -->
                 <aside id="ws-fill-sidebar" class="ed-sidebar panel-card">
@@ -382,7 +383,7 @@
                         </div>
 
                         <div id="ed3-sig-type-pane" class="sig-pane" hidden>
-                            <input type="text" id="ed3-sig-type-input" class="input input-sm" value="" placeholder="Type full name or stamp" autocomplete="name" / aria-label="Name or stamp text for typed signature">
+                            <input type="text" id="ed3-sig-type-input" class="input input-sm" value="" placeholder="Type full name or stamp" autocomplete="name" aria-label="Name or stamp text for typed signature" />
                             <div class="radio-row-compact">
                                 <label><input type="radio" name="ed3-sig-style" value="cursive" checked /> Cursive</label>
                                 <label><input type="radio" name="ed3-sig-style" value="serif" /> Executive Serif</label>
@@ -454,7 +455,7 @@
                                     <option value="TimesRoman">Serif (Times)</option>
                                     <option value="Courier">Mono (Courier)</option>
                                 </select>
-                                <input type="number" id="ed4-insp-size" class="input input-xs insp-size" min="8" max="64" value="12" title="Font size (pt)" / aria-label="Font size in points">
+                                <input type="number" id="ed4-insp-size" class="input input-xs insp-size" min="8" max="64" value="12" title="Font size (pt)" aria-label="Font size in points" />
                                 <button type="button" id="ed4-insp-bold" class="btn btn-ghost btn-xs" title="Bold"><strong>B</strong></button>
                                 <button type="button" id="ed4-insp-italic" class="btn btn-ghost btn-xs" title="Italic"><em>I</em></button>
                             </div>

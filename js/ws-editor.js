@@ -187,7 +187,7 @@ export function initEditorWorkspaces({
 
     // ---------- Password Prompt Helper ----------
 
-    function promptPasswordModal(filename) {
+    function promptPasswordModal(filename, wrongAttempt = false) {
         return new Promise((resolve) => {
             const backdrop = document.createElement('div');
             backdrop.className = 'modal-backdrop';
@@ -199,6 +199,7 @@ export function initEditorWorkspaces({
                     </header>
                     <form class="modal-body-pad js-form">
                         <p class="muted-text">Enter open password for <strong>${escapeHtml(filename)}</strong>:</p>
+                        ${wrongAttempt ? '<p class="preview-pw-error" role="alert">That password didn’t work. Try again.</p>' : ''}
                         <input type="password" class="input js-pw" placeholder="Open password" required autofocus />
                         <div class="modal-footer-btns">
                             <button type="button" class="btn btn-ghost btn-sm js-cancel">Cancel</button>
@@ -222,6 +223,24 @@ export function initEditorWorkspaces({
         });
     }
 
+    // Keep asking until the password works or the person cancels (a typo shouldn't abort the import).
+    async function askPasswordUntilUnlocked(name, bytes, firstWasWrong = false) {
+        let wrong = firstWasWrong;
+        for (;;) {
+            const entered = await promptPasswordModal(name, wrong);
+            if (!entered) return null;
+            try {
+                return await ensureUnlocked(bytes, entered);
+            } catch (err) {
+                if (err && (err.code === 'PASSWORD_REQUIRED' || err.code === 'INVALID_PASSWORD')) {
+                    wrong = true;
+                    continue;
+                }
+                throw err;
+            }
+        }
+    }
+
     // ---------- Document Loading & AcroForm Inspection ----------
 
     async function loadPdfDocument({ name, bytes, password = '' }) {
@@ -234,12 +253,11 @@ export function initEditorWorkspaces({
                 unlocked = await ensureUnlocked(bytes, password);
             } catch (err) {
                 if (err && (err.code === 'PASSWORD_REQUIRED' || err.code === 'INVALID_PASSWORD')) {
-                    const entered = await promptPasswordModal(name);
-                    if (!entered) {
+                    unlocked = await askPasswordUntilUnlocked(name, bytes, Boolean(password));
+                    if (!unlocked) {
                         toast('Cancelled opening password-protected PDF.', 'warn');
                         return;
                     }
-                    unlocked = await ensureUnlocked(bytes, entered);
                 } else {
                     throw err;
                 }
@@ -376,12 +394,39 @@ export function initEditorWorkspaces({
                 realNames.set(item.fontName, resolveRealFontName(page, item.fontName));
             }
 
+            // Direction of the text as it appears on screen (page rotation included).
+            const alongLen = Math.hypot(tx[0], tx[1]) || 1;
+            const ax = tx[0] / alongLen;
+            const ay = tx[1] / alongLen;
+            const rotated = !(ax > 0.985 && Math.abs(ay) < 0.17); // anything but left-to-right upright text
+
+            let left = baselineX;
+            let right = baselineX + width;
+            let top = baselineY - height * 0.85;
+            let bottom = baselineY + height * 0.25;
+            if (rotated) {
+                // Bounding box of the rotated text rectangle, so the hit area covers the text
+                // where it actually is instead of running sideways off the page.
+                const upLen = Math.hypot(tx[2], tx[3]) || 1;
+                const ux = tx[2] / upLen;
+                const uy = tx[3] / upLen;
+                const pts = [
+                    [baselineX - ux * height * 0.25, baselineY - uy * height * 0.25],
+                    [baselineX + ux * height * 0.85, baselineY + uy * height * 0.85],
+                ].flatMap(([x, y]) => [[x, y], [x + ax * width, y + ay * width]]);
+                left = Math.min(...pts.map((pt) => pt[0]));
+                right = Math.max(...pts.map((pt) => pt[0]));
+                top = Math.min(...pts.map((pt) => pt[1]));
+                bottom = Math.max(...pts.map((pt) => pt[1]));
+            }
+
             rawItems.push({
                 str: item.str,
-                left: baselineX,
-                right: baselineX + width,
-                top: baselineY - height * 0.85,
-                bottom: baselineY + height * 0.25,
+                left,
+                right,
+                top,
+                bottom,
+                rotated,
                 baselineY,
                 fontSizePt,
                 fontName: item.fontName || '',
@@ -396,6 +441,23 @@ export function initEditorWorkspaces({
         for (const curr of rawItems) {
             if (!curr.str.trim()) continue;
             const prev = spans[spans.length - 1];
+            // Line merging assumes upright horizontal text; rotated pieces stay separate.
+            if (curr.rotated || prev?.rotated) {
+                spans.push({
+                    text: curr.str,
+                    left: curr.left,
+                    right: curr.right,
+                    top: curr.top,
+                    bottom: curr.bottom,
+                    rotated: curr.rotated,
+                    baselineY: curr.baselineY,
+                    fontSizePt: curr.fontSizePt,
+                    fontFamilyHint: curr.fontFamilyHint,
+                    fontRealName: curr.fontRealName,
+                    fontGeneric: curr.fontGeneric,
+                });
+                continue;
+            }
             const sameLine = prev && Math.abs(curr.baselineY - prev.baselineY) <= Math.max(curr.fontSizePt, prev.fontSizePt) * 0.35;
             const gap = prev ? curr.left - prev.right : Infinity;
             const closeGap = prev && gap >= -prev.fontSizePt * 0.5 && gap <= Math.max(curr.fontSizePt, prev.fontSizePt) * 1.35;
@@ -773,6 +835,7 @@ export function initEditorWorkspaces({
                     syncFormSidebarField(field.name);
                     syncPageWidgetsForField(field.name);
                 });
+                input.setAttribute('aria-label', `${field.name.replace(/_/g, ' ')} (page ${meta.pageIndex + 1})`);
                 box.appendChild(input);
             } else if (field.type === 'checkbox') {
                 const cb = document.createElement('input');
@@ -784,6 +847,7 @@ export function initEditorWorkspaces({
                     state.formValues[field.name] = e.target.checked;
                     syncFormSidebarField(field.name);
                 });
+                cb.setAttribute('aria-label', `${field.name.replace(/_/g, ' ')} (page ${meta.pageIndex + 1})`);
                 box.appendChild(cb);
             } else if (field.type === 'dropdown' || field.type === 'optionlist') {
                 const sel = document.createElement('select');
@@ -801,6 +865,7 @@ export function initEditorWorkspaces({
                     state.formValues[field.name] = e.target.value;
                     syncFormSidebarField(field.name);
                 });
+                sel.setAttribute('aria-label', `${field.name.replace(/_/g, ' ')} (page ${meta.pageIndex + 1})`);
                 box.appendChild(sel);
             } else if (field.type === 'radio') {
                 const radio = document.createElement('input');
@@ -823,6 +888,7 @@ export function initEditorWorkspaces({
                     syncFormSidebarField(field.name);
                     syncPageWidgetsForField(field.name);
                 });
+                radio.setAttribute('aria-label', `${field.name.replace(/_/g, ' ')}: ${radioValue || 'option'} (page ${meta.pageIndex + 1})`);
                 box.appendChild(radio);
             }
 
@@ -889,9 +955,10 @@ export function initEditorWorkspaces({
             return;
         }
 
-        for (const field of state.formFields) {
+        state.formFields.forEach((field, fieldIdx) => {
             const row = document.createElement('div');
             row.className = 'form-field-row';
+            const controlId = `ed3-field-${fieldIdx}`;
 
             const labelText = field.name.replace(/_/g, ' ');
             if (field.type === 'checkbox') {
@@ -913,7 +980,9 @@ export function initEditorWorkspaces({
                 const label = document.createElement('label');
                 label.className = 'field-label';
                 label.textContent = labelText;
+                label.htmlFor = controlId;
                 const sel = document.createElement('select');
+                sel.id = controlId;
                 sel.className = 'input input-sm';
                 sel.dataset.sidebarField = field.name;
                 sel.appendChild(makeBlankOption(state.formValues[field.name]));
@@ -933,7 +1002,9 @@ export function initEditorWorkspaces({
                 const label = document.createElement('label');
                 label.className = 'field-label';
                 label.textContent = labelText;
+                label.htmlFor = controlId;
                 const input = document.createElement(field.multiline ? 'textarea' : 'input');
+                input.id = controlId;
                 if (field.multiline) input.rows = 3;
                 else input.type = 'text';
                 input.className = 'input input-sm';
@@ -948,7 +1019,7 @@ export function initEditorWorkspaces({
 
             row.addEventListener('focusin', () => scrollToFieldWidget(field.name));
             formListEl.appendChild(row);
-        }
+        });
     }
 
     function makeBlankOption(currentValue) {
@@ -984,12 +1055,23 @@ export function initEditorWorkspaces({
             btn.style.top = `${span.ny * 100}%`;
             btn.style.width = `${Math.max(span.nw * 100, 0.8)}%`;
             btn.style.height = `${Math.max(span.nh * 100, 1.2)}%`;
-            btn.title = `Click to edit "${span.text}"`;
-            btn.setAttribute('aria-label', `Edit PDF text: ${span.text}`);
+            if (span.rotated) {
+                // Inline replacement text is drawn upright, so it can't stand in for sideways text.
+                btn.classList.add('is-rotated');
+                btn.title = 'This text is sideways. Rotate the page upright in Merge, Split & Pages to edit it.';
+                btn.setAttribute('aria-label', `Sideways text, not editable here: ${span.text}`);
+            } else {
+                btn.title = `Click to edit "${span.text}"`;
+                btn.setAttribute('aria-label', `Edit PDF text: ${span.text}`);
+            }
 
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (state.tool !== 'text-edit') return;
+                if (span.rotated) {
+                    toast('This text is sideways on the page. Rotate the page upright in Merge, Split & Pages, then edit it here.', 'warn');
+                    return;
+                }
                 createOrFocusTextEditFromSpans(meta, [span]);
             });
 
@@ -1190,6 +1272,7 @@ export function initEditorWorkspaces({
                         if (nw < 0.01 && nh < 0.01) return;
                         const matching = meta.textSpans.filter(
                             (sp) =>
+                                !sp.rotated &&
                                 sp.nx < nx + nw &&
                                 sp.nx + sp.nw > nx &&
                                 sp.ny < ny + nh &&
@@ -1985,14 +2068,38 @@ export function initEditorWorkspaces({
 
         const supported = new Set(font.getCharacterSet());
         const missing = new Set();
+        const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+        const graphemes = (text) => (segmenter ? [...segmenter.segment(text)].map((g) => g.segment) : [...text]);
+        const canDraw = (g) => [...g].every((ch) => /\s/.test(ch) || supported.has(ch.codePointAt(0)));
+
         for (const field of fields) {
-            for (const ch of field.getText() || '') {
-                if (!/\s/.test(ch) && !supported.has(ch.codePointAt(0))) missing.add(ch);
+            const original = field.getText() || '';
+            // Characters the bundled font lacks (e.g. Devanagari, Tamil, CJK) are drawn as one "?" per
+            // character. This also keeps them away from fontkit's complex-script shaper, which
+            // crashes in this build ("regeneratorRuntime is not defined").
+            const drawable = graphemes(original)
+                .map((g) => {
+                    if (canDraw(g)) return g;
+                    missing.add(g);
+                    return '?';
+                })
+                .join('');
+            try {
+                if (drawable !== original) field.setText(drawable);
+                field.updateAppearances(font);
+            } catch {
+                // Last resort: a plain appearance that the standard font can always draw.
+                field.setText([...drawable].map((ch) => (isWinAnsiText(ch) ? ch : '?')).join(''));
+                continue;
             }
-            field.updateAppearances(font);
+            if (drawable !== original) {
+                // Keep exactly what was typed as the field's value; only its appearance uses "?".
+                field.acroField.setValue(window.PDFLib.PDFHexString.fromText(original));
+            }
         }
         if (missing.size > 0) {
-            toast(`These characters aren't supported in form fields and may not display: ${[...missing].join(' ')}`, 'warn');
+            const list = [...missing].slice(0, 12).join(' ');
+            toast(`Some characters can't be drawn in form fields, so they show as "?" in the PDF: ${list}${missing.size > 12 ? ' …' : ''}. What you typed is still saved as the field's value.`, 'warn');
         }
     }
 

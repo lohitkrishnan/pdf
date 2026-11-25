@@ -12,11 +12,14 @@ A 100% client-side, zero-upload browser PDF studio designed to run as a static G
 
 2. **Merge, Split & Visual Page Organizer**
    - Combines multiple PDFs (auto-unlocking owner-locked files) and images (`.png`, `.jpg`, `.webp`).
-   - Drag-and-drop reordering, keyboard nudge (`←`/`→`), bulk rotate `90° CW`, duplicate, delete, reverse order, and `+ Blank Page`.
+   - Drag-and-drop reordering (plus a touch-friendly drag handle), keyboard nudge (`←`/`→`), Shift+click range selection, bulk rotate `90° CW`, duplicate, delete, reverse order, and `+ Blank Page`.
+   - **Crop pages:** draw the area to keep (or type margins, or auto-trim to the content) and apply it to selected or all pages; crops turn with the page when rotated.
    - Exports losslessly merged PDFs, custom page range extractions (`1-3, 5`), or burst-splits every `N` pages into a `.zip` archive via a custom binary PKZIP writer.
+   - **Export as Images:** JPG or PNG at 72/150/300 DPI for all or selected pages (single image or `.zip`), with the DPI recorded in each file.
 
 3. **Fill Interactive Forms & Sign** *(shared document state with Workspace 4)*
-   - Auto-detects interactive `AcroForm` text fields, checkboxes, and dropdowns in both the sidebar and interactive page hotspots, with optional field flattening on export.
+   - Auto-detects interactive `AcroForm` text fields (including multi-line), checkboxes, radio groups, dropdowns and option lists in both the sidebar and interactive page hotspots, with optional field flattening on export.
+   - Field values with characters outside the standard PDF fonts (e.g. `₹`) are drawn with an embedded Noto Sans; scripts the bundled font doesn't cover show as `?` in the field's appearance while the typed value is kept.
    - Draw, type (Cursive / Executive Serif / Official Stamp), or upload transparent signatures & stamps.
 
 4. **Edit Text, Overlay, Whiteout & Confidential Redaction**

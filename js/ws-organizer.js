@@ -59,7 +59,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
     const imgScopeEl = root.querySelector('#org-img-scope');
     const imgExportBtn = root.querySelector('#org-img-export-btn');
 
-    function promptPasswordModal(filename) {
+    function promptPasswordModal(filename, wrongAttempt = false) {
         return new Promise((resolve) => {
             const backdrop = document.createElement('div');
             backdrop.className = 'modal-backdrop';
@@ -71,6 +71,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
                     </header>
                     <form class="modal-body-pad js-form">
                         <p class="muted-text">Enter open password for <strong>${escapeHtml(filename)}</strong> to import its pages:</p>
+                        ${wrongAttempt ? '<p class="preview-pw-error" role="alert">That password didn’t work. Try again.</p>' : ''}
                         <input type="password" class="input js-pw" placeholder="Open password" required autofocus />
                         <div class="modal-footer-btns">
                             <button type="button" class="btn btn-ghost btn-sm js-cancel">Cancel</button>
@@ -485,12 +486,25 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             unlockedBytes = await ensureUnlocked(rawBytes, initialPassword);
         } catch (err) {
             if (err && (err.code === 'PASSWORD_REQUIRED' || err.code === 'INVALID_PASSWORD')) {
-                const entered = await promptPasswordModal(name);
-                if (!entered) {
-                    toast(`Skipped "${name}" (password required).`, 'warn');
-                    return;
+                // Keep asking until the password works or the person cancels.
+                let wrong = Boolean(initialPassword);
+                for (;;) {
+                    const entered = await promptPasswordModal(name, wrong);
+                    if (!entered) {
+                        toast(`Skipped "${name}" (password required).`, 'warn');
+                        return;
+                    }
+                    try {
+                        unlockedBytes = await ensureUnlocked(rawBytes, entered);
+                        break;
+                    } catch (retryErr) {
+                        if (retryErr && (retryErr.code === 'PASSWORD_REQUIRED' || retryErr.code === 'INVALID_PASSWORD')) {
+                            wrong = true;
+                            continue;
+                        }
+                        throw retryErr;
+                    }
                 }
-                unlockedBytes = await ensureUnlocked(rawBytes, entered);
             } else {
                 throw err;
             }
@@ -868,7 +882,30 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
     function detectContentMargins(canvas) {
         const { width, height } = canvas;
         const data = canvas.getContext('2d').getImageData(0, 0, width, height).data;
-        const bg = [data[0], data[1], data[2]];
+        // Background = the most common colour around the page edge (not just the corner pixel, which
+        // may sit on a full-width header bar). Full-bleed bars then count as content and are kept.
+        const buckets = new Map();
+        const sample = (x, y) => {
+            const i = (y * width + x) * 4;
+            const key = ((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4);
+            const b = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+            b.n += 1;
+            b.r += data[i];
+            b.g += data[i + 1];
+            b.b += data[i + 2];
+            buckets.set(key, b);
+        };
+        const edgeStep = Math.max(1, Math.floor(Math.max(width, height) / 400));
+        for (let x = 0; x < width; x += edgeStep) {
+            sample(x, 0);
+            sample(x, height - 1);
+        }
+        for (let y = 0; y < height; y += edgeStep) {
+            sample(0, y);
+            sample(width - 1, y);
+        }
+        const top = [...buckets.values()].sort((a, b) => b.n - a.n)[0];
+        const bg = [top.r / top.n, top.g / top.n, top.b / top.n];
         let minX = width, minY = height, maxX = -1, maxY = -1;
         const step = Math.max(1, Math.floor(Math.min(width, height) / 500));
         for (let y = 0; y < height; y += step) {
@@ -892,9 +929,14 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
         };
     }
 
+    let cropDialogOpen = false;
     async function openCropDialog() {
+        // One dialog at a time (focus can stay on the Crop button, so Enter could fire it twice).
+        if (cropDialogOpen) return;
         const selectedItems = state.pages.filter((p) => p.selected);
         if (selectedItems.length === 0) return;
+        cropDialogOpen = true;
+        const opener = document.activeElement;
         const ref = selectedItems[0];
         const refRotation = totalRotationOf(ref);
         let vis = ref.crop ? baseToVisual(ref.crop, refRotation) : { t: 0, r: 0, b: 0, l: 0 };
@@ -948,6 +990,8 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             document.removeEventListener('keydown', onKey);
             document.body.classList.remove('modal-open');
             backdrop.remove();
+            cropDialogOpen = false;
+            if (opener && opener.isConnected) opener.focus();
         };
         const onKey = (e) => { if (e.key === 'Escape') close(); };
         document.addEventListener('keydown', onKey);
@@ -985,6 +1029,42 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             sync(true);
         }));
         sync();
+
+        // Wire the buttons before rendering, so Apply works even if the preview is slow or fails.
+        backdrop.querySelector('.js-reset').addEventListener('click', () => {
+            vis = { t: 0, r: 0, b: 0, l: 0 };
+            sync();
+        });
+        backdrop.querySelector('.js-auto').addEventListener('click', () => {
+            if (!canvas) {
+                toast('The page preview is still loading.', 'warn');
+                return;
+            }
+            const m = detectContentMargins(canvas);
+            if (!m) {
+                toast('This page looks blank, so there is nothing to trim to.', 'warn');
+                return;
+            }
+            vis = m;
+            sync();
+        });
+
+        backdrop.querySelector('.js-apply').addEventListener('click', async () => {
+            const scope = backdrop.querySelector('input[name="crop-scope"]:checked').value;
+            const targets = scope === 'all' ? state.pages : selectedItems;
+            const finalVis = clampVis(vis);
+            for (const item of targets) {
+                // The same visual margins on every page, converted to each page's own orientation.
+                item.crop = isNoCrop(finalVis) ? null : visualToBase(finalVis, totalRotationOf(item));
+            }
+            close();
+            await refreshThumbnailsForItems(targets);
+            renderGrid();
+            toast(isNoCrop(finalVis)
+                ? `Removed the crop from ${targets.length} page${targets.length === 1 ? '' : 's'}.`
+                : `Cropped ${targets.length} page${targets.length === 1 ? '' : 's'}.`, 'ok');
+        });
+        backdrop.querySelector('.js-margin')?.focus();
 
         canvas = await renderPageForCrop(ref, 460, Math.min(560, window.innerHeight * 0.62)).catch(() => null);
         if (!backdrop.isConnected) return;
@@ -1048,35 +1128,6 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             stage.addEventListener('pointercancel', onUp);
         });
 
-        backdrop.querySelector('.js-reset').addEventListener('click', () => {
-            vis = { t: 0, r: 0, b: 0, l: 0 };
-            sync();
-        });
-        backdrop.querySelector('.js-auto').addEventListener('click', () => {
-            const m = detectContentMargins(canvas);
-            if (!m) {
-                toast('This page looks blank, so there is nothing to trim to.', 'warn');
-                return;
-            }
-            vis = m;
-            sync();
-        });
-
-        backdrop.querySelector('.js-apply').addEventListener('click', async () => {
-            const scope = backdrop.querySelector('input[name="crop-scope"]:checked').value;
-            const targets = scope === 'all' ? state.pages : selectedItems;
-            const finalVis = clampVis(vis);
-            for (const item of targets) {
-                // The same visual margins on every page, converted to each page's own orientation.
-                item.crop = isNoCrop(finalVis) ? null : visualToBase(finalVis, totalRotationOf(item));
-            }
-            close();
-            await refreshThumbnailsForItems(targets);
-            renderGrid();
-            toast(isNoCrop(finalVis)
-                ? `Removed the crop from ${targets.length} page${targets.length === 1 ? '' : 's'}.`
-                : `Cropped ${targets.length} page${targets.length === 1 ? '' : 's'}.`, 'ok');
-        });
     }
 
     cropSelBtn.addEventListener('click', () => openCropDialog());

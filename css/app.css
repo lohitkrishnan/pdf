@@ -1224,6 +1224,28 @@ code, kbd {
     cursor: text;
 }
 
+/* Outside "Edit PDF Text" the span buttons are hidden from keyboard and screen readers too. */
+.ed-stage-pane:not(.mode-text-edit) .ed-text-edit-layer {
+    visibility: hidden;
+}
+
+.ed-stage-pane.mode-text-edit .ed-pdf-text-span.is-rotated {
+    cursor: not-allowed;
+    outline-style: dashed;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .ed-stage-pane.mode-draw-box .pdf-page-wrapper {
     cursor: crosshair;
 }
