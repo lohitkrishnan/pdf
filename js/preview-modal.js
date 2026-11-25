@@ -1,4 +1,4 @@
-import { pdfjsLib, formatBytes, downloadBlob } from './pdf-utils.js';
+import { pdfjsLib, formatBytes, downloadBlob, capScale } from './pdf-utils.js';
 
 let modalEl = null;
 let currentPdf = null;
@@ -35,7 +35,7 @@ function ensureModalDom() {
                         <button type="button" class="btn btn-ghost btn-sm" id="preview-zoom-fit" title="Fit width">Fit</button>
                     </div>
                     <button type="button" class="btn btn-primary btn-sm" id="preview-download-btn">Download PDF</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="preview-close-btn" aria-label="Close preview">✕ Esc</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="preview-close-btn" aria-label="Close preview">✕<span class="esc-hint"> Esc</span></button>
                 </div>
             </header>
             <div class="preview-body" id="preview-modal-body"></div>
@@ -129,15 +129,16 @@ async function renderPreviewPages() {
 
     const drawSlot = (slot) => {
         if (slot.rendered || slot.rendering) return slot.rendering;
-        slot.canvas.width = Math.max(1, Math.round(slot.vp.width * dpr));
-        slot.canvas.height = Math.max(1, Math.round(slot.vp.height * dpr));
+        const r = capScale(slot.vp.width, slot.vp.height, dpr); // stays within the device's canvas limit
+        slot.canvas.width = Math.max(1, Math.round(slot.vp.width * r));
+        slot.canvas.height = Math.max(1, Math.round(slot.vp.height * r));
         const ctx = slot.canvas.getContext('2d', { alpha: false });
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, slot.canvas.width, slot.canvas.height);
         slot.rendering = slot.page.render({
             canvasContext: ctx,
             viewport: slot.vp,
-            transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+            transform: r !== 1 ? [r, 0, 0, r, 0, 0] : null,
         }).promise
             .then(() => { if (seq === renderSeq) slot.rendered = true; })
             .catch(() => {})

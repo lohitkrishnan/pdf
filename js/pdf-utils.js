@@ -5,6 +5,17 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs',
 
 export { pdfjsLib };
 
+// iPhones and iPads (every browser there uses WebKit) refuse to create canvases above about
+// 16.7 million pixels and return blank ones instead. Other browsers manage far more.
+export const IS_IOS = typeof navigator !== 'undefined'
+    && (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+export const MAX_CANVAS_PIXELS = IS_IOS ? 16_000_000 : 40_000_000;
+
+/** Largest scale ≤ `scale` at which a w × h (at scale 1) drawing stays within MAX_CANVAS_PIXELS. */
+export function capScale(w, h, scale) {
+    return Math.min(scale, Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, w * h)));
+}
+
 export function formatBytes(bytes) {
     if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
@@ -125,7 +136,7 @@ export async function rasterDownsamplePdf(pdfBytes, dpi = 150, jpegQuality = 0.8
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
             const page = await pdf.getPage(pageNum);
             const baseVp = page.getViewport({ scale: 1 });
-            const renderVp = page.getViewport({ scale });
+            const renderVp = page.getViewport({ scale: capScale(baseVp.width, baseVp.height, scale) });
 
             const canvas = document.createElement('canvas');
             canvas.width = Math.max(1, Math.round(renderVp.width));

@@ -9,6 +9,8 @@ import {
     isPdfFile,
     isImageFile,
     stripPdfExtension,
+    capScale,
+    MAX_CANVAS_PIXELS,
 } from './pdf-utils.js';
 import { openPreviewModal } from './preview-modal.js';
 import { createZip, crc32 } from './zip.js';
@@ -862,7 +864,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
             const page = await pdf.getPage(item.sourcePageIndex + 1);
             const base = page.getViewport({ scale: 1, rotation });
             const scale = Math.min(maxW / base.width, maxH / base.height);
-            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const dpr = capScale(base.width * scale, base.height * scale, Math.min(window.devicePixelRatio || 1, 2));
             const vp = page.getViewport({ scale: scale * dpr, rotation });
             const c = document.createElement('canvas');
             c.width = Math.round(vp.width);
@@ -1133,7 +1135,7 @@ export function initOrganizerWorkspace({ root, toast, handoffToEditor }) {
     cropSelBtn.addEventListener('click', () => openCropDialog());
 
     // ---------- Export pages as images ----------
-    const MAX_IMAGE_PIXELS = 40_000_000; // keeps canvases within browser limits
+    const MAX_IMAGE_PIXELS = MAX_CANVAS_PIXELS; // keeps canvases within browser limits (about 16 MP on iPhones)
     const MAX_IMAGE_SIDE = 16_000;
 
     // Record the DPI in the file so print and layout apps use the intended physical size.

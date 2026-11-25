@@ -41,6 +41,7 @@ function formatSize(n) {
 }
 
 let pending = []; // { blob, filename }
+let lastDeliverAt = 0;
 let sheet = null;
 
 function closeSheet() {
@@ -122,8 +123,15 @@ export function deliverFile(blob, filename) {
         saveDirect(blob, filename);
         return;
     }
+    // Files produced together (a batch) share one sheet; a later export replaces what is
+    // waiting, so an old version is never shared along with the new one.
+    const now = Date.now();
+    if (now - lastDeliverAt > 2500) pending = [];
+    lastDeliverAt = now;
     pending.push({ blob, filename });
     renderSheet();
+    // Editors close their own pull-up panels so this one isn't stacked on top of them.
+    document.dispatchEvent(new CustomEvent('deliver:open'));
 }
 
 /**

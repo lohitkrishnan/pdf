@@ -5,12 +5,14 @@
 
 const SHEETS = {
     fill: [['fields', 'Form fields'], ['sign', 'Signature'], ['open', 'Open PDF'], ['save', 'Save']],
-    redact: [['tools', 'Tools'], ['edits', 'Edits list'], ['open', 'Open PDF'], ['save', 'Save']],
+    redact: [['tools', 'Tools'], ['selected', 'Selected'], ['edits', 'Edits list'], ['open', 'Open PDF'], ['save', 'Save']],
 };
 
-export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor }) {
-    const mq = matchMedia('(max-width: 720px)');
+export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor, toast }) {
+    const mq = matchMedia('(max-width: 720px), (max-width: 960px) and (max-height: 500px)');
     const scroller = shell.querySelector('#ed-stage-scroll');
+    const inspector = shell.querySelector('#ed4-inspector');
+    const hasSelection = () => !!inspector && !inspector.hidden;
     const pagesEl = shell.querySelector('#ed-stage-pages');
 
     const dock = document.createElement('div');
@@ -43,6 +45,7 @@ export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor }) {
 
     function renderDock() {
         dock.innerHTML = '';
+        dock.style.gridTemplateColumns = `repeat(${SHEETS[tab].length}, minmax(0, 1fr))`;
         for (const [key, label] of SHEETS[tab]) {
             const b = document.createElement('button');
             b.type = 'button';
@@ -51,6 +54,12 @@ export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor }) {
             b.dataset.sheet = key;
             b.setAttribute('aria-expanded', String(openKey === key));
             b.classList.toggle('is-active', openKey === key);
+            // The formatting panel for a selected item only has something to show when an
+            // item is selected; light the button up when one is.
+            if (key === 'selected') {
+                b.disabled = !hasSelection();
+                b.classList.toggle('has-selection', hasSelection() && openKey !== key);
+            }
             b.addEventListener('click', () => openSheet(openKey === key ? null : key));
             dock.appendChild(b);
         }
@@ -71,8 +80,12 @@ export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor }) {
     function layout() {
         if (!active) return;
         const side = sidebar();
+        const open = side.classList.contains('is-open');
+        // Sideways phones show the panel as a drawer beside the pages, not below them.
+        const drawer = matchMedia('(max-height: 500px) and (orientation: landscape)').matches;
+        document.body.classList.toggle('pe-sheet-open', open);
         document.documentElement.style.setProperty('--pe-dock-h', `${dock.offsetHeight}px`);
-        document.documentElement.style.setProperty('--pe-sheet-h', `${side.classList.contains('is-open') ? side.offsetHeight : 0}px`);
+        document.documentElement.style.setProperty('--pe-sheet-h', `${open && !drawer ? side.offsetHeight : 0}px`);
     }
 
     function update() {
@@ -85,6 +98,7 @@ export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor }) {
             dock.hidden = !active;
             if (!active) {
                 openSheet(null);
+                document.body.classList.remove('pe-sheet-open');
                 document.documentElement.style.removeProperty('--pe-dock-h');
                 document.documentElement.style.removeProperty('--pe-sheet-h');
             } else {
@@ -109,16 +123,29 @@ export function initPhoneEditor({ shell, fillSidebar, redactSidebar, editor }) {
         if (!active || !openKey) return;
         const t = e.target.closest('button');
         if (!t) return;
+        if (t.matches('.js-ed-tool[data-tool="text-edit"]') && editor.getZoom() < 1) {
+            // Lines of text are tiny at fit-to-screen size.
+            toast?.('Pinch to zoom in, then tap a line of text to edit it.', 'info');
+        }
         if (t.matches('.js-ed-tool, #ed4-verified-btn, [id^="ed3-sig-place"], #ed3-upload-btn, #ed4-upload-btn, #ed3-sample-btn, #ed4-sample-btn')) {
             setTimeout(() => openSheet(null), 0);
         }
     });
 
     mq.addEventListener?.('change', update);
+    document.addEventListener('deliver:open', () => { if (active) openSheet(null); });
+    window.addEventListener('resize', () => requestAnimationFrame(layout));
     const mo = new MutationObserver(update);
     mo.observe(shell, { attributes: true, attributeFilter: ['hidden'] });
     mo.observe(redactSidebar, { attributes: true, attributeFilter: ['hidden'] });
     mo.observe(pagesEl, { attributes: true, attributeFilter: ['hidden'] });
+    if (inspector) {
+        new MutationObserver(() => {
+            if (!active) return;
+            if (!hasSelection() && openKey === 'selected') openSheet(null);
+            else renderDock();
+        }).observe(inspector, { attributes: true, attributeFilter: ['hidden'] });
+    }
     new ResizeObserver(() => layout()).observe(fillSidebar);
     new ResizeObserver(() => layout()).observe(redactSidebar);
 

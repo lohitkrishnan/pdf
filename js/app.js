@@ -114,7 +114,7 @@ function initApp() {
         switchToTab,
     });
 
-    initPhoneEditor({ shell: edShell, fillSidebar, redactSidebar, editor: editorWs });
+    initPhoneEditor({ shell: edShell, fillSidebar, redactSidebar, editor: editorWs, toast });
 
     // Arrow keys move between tabs (WAI-ARIA tabs pattern, automatic activation).
     const tabList = Array.from(navBtns);

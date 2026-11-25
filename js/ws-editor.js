@@ -6,6 +6,7 @@ import {
     readFileBytes,
     isPdfFile,
     stripPdfExtension,
+    capScale,
 } from './pdf-utils.js';
 import { openPreviewModal } from './preview-modal.js';
 import { createFillableNdaSample, createConfidentialEditableSample } from './samples.js';
@@ -25,6 +26,26 @@ const COLOR_PRESETS = {
     red: '#b91c1c',
     green: '#15803d',
 };
+
+
+const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
+/**
+ * iPhones zoom the page when a text box's font is under 16px. On touch screens, draw the box at
+ * 16px and shrink it with a transform so it looks the intended size.
+ */
+function setIosSafeFont(el, px) {
+    if (!COARSE_POINTER || px >= 16) {
+        el.style.fontSize = `${px}px`;
+        return;
+    }
+    const k = px / 16;
+    el.style.fontSize = '16px';
+    el.style.width = `${100 / k}%`;
+    el.style.height = `${100 / k}%`;
+    el.style.transform = `scale(${k})`;
+    el.style.transformOrigin = '0 0';
+}
 
 export function initEditorWorkspaces({
     root3,
@@ -705,9 +726,12 @@ export function initEditorWorkspaces({
             wrapper.style.width = `${cssVp.width}px`;
             wrapper.style.height = `${cssVp.height}px`;
 
+            // Draw at screen density, but never past the device's canvas size limit (zoomed-in
+            // pages on iPhones would otherwise come out blank).
+            const pageDpr = capScale(cssVp.width, cssVp.height, dpr);
             const canvas = document.createElement('canvas');
-            canvas.width = Math.max(1, Math.round(cssVp.width * dpr));
-            canvas.height = Math.max(1, Math.round(cssVp.height * dpr));
+            canvas.width = Math.max(1, Math.round(cssVp.width * pageDpr));
+            canvas.height = Math.max(1, Math.round(cssVp.height * pageDpr));
             canvas.style.width = `${cssVp.width}px`;
             canvas.style.height = `${cssVp.height}px`;
 
@@ -749,7 +773,7 @@ export function initEditorWorkspaces({
             await page.render({
                 canvasContext: ctx,
                 viewport: cssVp,
-                transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+                transform: pageDpr !== 1 ? [pageDpr, 0, 0, pageDpr, 0, 0] : null,
                 annotationMode,
             }).promise;
 
@@ -781,7 +805,7 @@ export function initEditorWorkspaces({
                 cssVp,
                 rotate: page.rotate || 0,
                 canvas,
-                dpr,
+                dpr: pageDpr,
                 annotationMode,
                 rendered: true,
                 renderPromise: null,
@@ -1364,7 +1388,7 @@ export function initEditorWorkspaces({
                     ta.className = 'ed-inline-textarea';
                     ta.value = item.text;
                     ta.style.fontFamily = fontCss;
-                    ta.style.fontSize = `${item.fontSizePt * state.zoom}px`;
+                    setIosSafeFont(ta, item.fontSizePt * state.zoom);
                     ta.style.fontWeight = item.bold ? '700' : '400';
                     ta.style.fontStyle = item.italic ? 'italic' : 'normal';
                     ta.style.color = item.color;
@@ -2131,7 +2155,7 @@ export function initEditorWorkspaces({
             for (const pageIdx of redacted) {
                 const jsPage = await jsDoc.getPage(pageIdx + 1);
                 const baseVp = jsPage.getViewport({ scale: 1 });
-                const renderVp = jsPage.getViewport({ scale: 200 / 72 });
+                const renderVp = jsPage.getViewport({ scale: capScale(baseVp.width, baseVp.height, 200 / 72) });
                 const canvas = document.createElement('canvas');
                 canvas.width = Math.max(1, Math.round(renderVp.width));
                 canvas.height = Math.max(1, Math.round(renderVp.height));

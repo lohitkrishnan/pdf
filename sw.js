@@ -5,7 +5,7 @@
 // old one and takes over only when the user chooses to reload, so work in progress is safe.
 
 const CACHE_PREFIX = 'lk-pdf-studio-';
-const VERSION = '2bcf07ee0456';
+const VERSION = 'b7e29c0782d9';
 const FILES = [
     './',
     './css/app.css',
