@@ -90,3 +90,14 @@ To link it from the homepage (`lohitkrishnan.com/index.html`), use the same sect
 | `jspdf.umd.min.js` | jsPDF | MIT |
 | `fontkit.umd.min.js` | @pdf-lib/fontkit 1.1.1 (loaded only when a form field needs a Unicode font) | MIT |
 | `fonts/NotoSans-Regular.ttf` | Noto Sans, trimmed to Latin, Greek, Cyrillic, punctuation and currency symbols (used for form fields containing characters like ₹) | SIL Open Font License 1.1, see `fonts/OFL.txt` |
+| `fonts/Lora-Variable.woff` (top-level `fonts/` folder) | Lora, the headings font shared with lohitkrishnan.com | SIL Open Font License 1.1 |
+
+## Licence
+
+The code in this repository is released under the [MIT License](LICENSE): you may use, change
+and share it, including commercially, as long as the copyright notice stays with it.
+Third-party files keep their own licences, listed above.
+
+PDF Studio is part of [lohitkrishnan.com](https://lohitkrishnan.com). Its companion tool,
+[Image Studio](https://lohitkrishnan.com/image/) ([source](https://github.com/lohitkrishnan/image)),
+works the same way for photos.
